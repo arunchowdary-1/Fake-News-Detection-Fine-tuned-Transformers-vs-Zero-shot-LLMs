@@ -1,3 +1,98 @@
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+authorized_keys
+~/.ssh/*
+
+# Model Checkpoints & Weights (DO NOT COMMIT)
+*.pt
+*.pth
+*.safetensors
+checkpoint_*
+model_*.bin
+bert_checkpoint*
+lstm_checkpoint*
+
+# Datasets & Cache (download at runtime)
+data/
+*.pkl
+*.pickle
+.cache/
+huggingface_cache/
+~/.cache/
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
 .pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Logs
+*.log
+logs/
+
+# Temporary Files
+*.tmp
+*.temp
+.tmp/
+scratch/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# OS
+Thumbs.db
