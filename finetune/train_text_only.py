@@ -40,6 +40,7 @@ from typing import List
 import numpy as np
 import torch
 import torch.nn as nn
+from datasets import Dataset   # tiny label-name dataset for the shared subset helper
 # AutoTokenizer / AutoModel... pick the right classes from the model NAME, so the
 # same script works for bert-base-uncased AND the distilbert fallback.
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -92,7 +93,9 @@ def shared_test_indices(test_split) -> List[int]:
     if os.path.exists(TEST_INDICES_PATH):
         return load_test_indices(TEST_INDICES_PATH)
     names = test_split.features["label"].names
-    named = test_split.map(lambda r: {"label": names[r["label"]]}, features=None)
+    # Build a minimal dataset whose "label" column holds the label NAMES (strings).
+    # (Using .map() would NOT work: the column keeps its integer ClassLabel type.)
+    named = Dataset.from_dict({"label": [names[i] for i in test_split["label"]]})
     indices = get_test_indices(named)
     save_test_indices(indices, TEST_INDICES_PATH)
     return indices
