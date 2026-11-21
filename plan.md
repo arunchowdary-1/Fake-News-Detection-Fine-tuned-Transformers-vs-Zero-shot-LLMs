@@ -1,7 +1,7 @@
 # Fake News Detection: Project Plan
 ## Fine-tuned Transformers vs Zero-shot LLMs
 
-**Timeline:** 60 minutes  
+
 **Team:** 4 people (A: Data, B: Fine-tuning, C: LLM, D: App & Analysis)  
 **Goal:** Build and compare LSTM → BERT fine-tuning vs zero-shot LLM prompting on LIAR dataset (6-class truthfulness classification)
 
