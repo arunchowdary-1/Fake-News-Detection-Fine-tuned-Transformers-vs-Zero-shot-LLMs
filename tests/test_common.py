@@ -1,5 +1,5 @@
 """
-Unit tests for common module (data loader, config).
+Unit tests for common module (data loader, config, evaluation).
 """
 
 import pytest
@@ -12,6 +12,7 @@ from common.data_loader import (
     load_liar,
     get_test_indices,
 )
+from common.evaluate import evaluate, build_results_dict
 
 
 class TestConfig:
@@ -247,6 +248,93 @@ class TestDataLoading:
         assert len(indices) == 100
         assert len(set(indices)) == 100  # All unique
         assert all(0 <= i < len(test) for i in indices)
+
+
+class TestEvaluation:
+    """Test evaluation metrics."""
+
+    def test_evaluate_perfect_predictions(self):
+        """Test evaluation with perfect predictions."""
+        y_true = [0, 1, 2, 3, 4, 5]
+        y_pred = [0, 1, 2, 3, 4, 5]
+
+        metrics = evaluate(y_true, y_pred)
+
+        assert metrics["accuracy"] == 1.0
+        assert metrics["macro_f1"] == 1.0
+        assert metrics["n_samples"] == 6
+
+    def test_evaluate_all_wrong(self):
+        """Test evaluation with all wrong predictions."""
+        y_true = [0, 0, 0, 0]
+        y_pred = [1, 1, 1, 1]
+
+        metrics = evaluate(y_true, y_pred)
+
+        assert metrics["accuracy"] == 0.0
+        assert metrics["macro_f1"] < 1.0
+        assert metrics["n_samples"] == 4
+
+    def test_evaluate_partial_correct(self):
+        """Test evaluation with partial correctness."""
+        y_true = [0, 1, 2, 3, 4, 5, 0, 1, 2, 3]
+        y_pred = [0, 1, 2, 3, 4, 5, 1, 1, 2, 3]  # One error
+
+        metrics = evaluate(y_true, y_pred)
+
+        assert 0 < metrics["accuracy"] < 1
+        assert 0 < metrics["macro_f1"] < 1
+        assert len(metrics["confusion_matrix"]) == 6
+        assert metrics["n_samples"] == 10
+
+    def test_evaluate_mismatched_lengths(self):
+        """Test that mismatched lengths raise error."""
+        y_true = [0, 1, 2]
+        y_pred = [0, 1]
+
+        with pytest.raises(ValueError):
+            evaluate(y_true, y_pred)
+
+    def test_evaluate_empty(self):
+        """Test that empty predictions raise error."""
+        with pytest.raises(ValueError):
+            evaluate([], [])
+
+    def test_evaluate_confusion_matrix(self):
+        """Test that confusion matrix is 6x6."""
+        y_true = list(range(6)) * 2
+        y_pred = list(range(6)) * 2
+
+        metrics = evaluate(y_true, y_pred)
+
+        cm = metrics["confusion_matrix"]
+        assert len(cm) == 6
+        assert all(len(row) == 6 for row in cm)
+
+    def test_build_results_dict(self):
+        """Test building standardized results dictionary."""
+        y_true = [0, 1, 2, 3, 4, 5]
+        y_pred = [0, 1, 2, 3, 4, 5]
+        metrics = evaluate(y_true, y_pred)
+
+        results = build_results_dict(
+            model_name="test_bert",
+            metrics=metrics,
+            params=110000000,
+            train_minutes=5.0,
+            gpu="T4",
+            avg_latency_ms=50.0,
+            est_cost_per_1k=0.10,
+            notes="Test run"
+        )
+
+        assert results["model"] == "test_bert"
+        assert results["accuracy"] == 1.0
+        assert results["params"] == 110000000
+        assert results["train_minutes"] == 5.0
+        assert results["gpu"] == "T4"
+        assert "confusion_matrix" in results
+        assert "per_class_metrics" in results
 
 
 if __name__ == "__main__":
