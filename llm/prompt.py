@@ -1,11 +1,12 @@
 """Zero-shot prompt for LIAR 6-class truthfulness classification.
 
-LABELS is duplicated here only until common/config.py lands (issue #2);
-then import it from there so the label order has a single source of truth.
+LABELS comes from common/config.py so the label order has one source of truth.
 """
 
-# Fixed label order, least to most truthful (matches the shared label map).
-LABELS = ["pants-fire", "false", "barely-true", "half-true", "mostly-true", "true"]
+from common.config import LABEL_TO_IDX
+
+# Single source of truth: the shared label map (dict order is index order 0..5).
+LABELS = list(LABEL_TO_IDX)
 
 # Model is NOT pinned here: the team has to approve it and check its license
 # (Qwen2.5-7B-Instruct recommended; Mistral-7B-Instruct alternative).

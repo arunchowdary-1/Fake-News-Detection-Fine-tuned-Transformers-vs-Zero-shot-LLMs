@@ -1,129 +1,121 @@
-"""Full zero-shot LLM evaluation (issue #8): writes the shared results files.
+"""Full zero-shot LLM evaluation (issue #8) on the shared test subset.
 
-Outputs (formats from plan.md section 4):
-    results/llm_preds.csv   id,y_true,y_pred,latency_ms
-    results/llm.json        accuracy, macro_f1, latency, cost, invalid count...
+Uses the same pieces as the LSTM and BERT scripts so the results are directly
+comparable: the Hugging Face LIAR loader, the fixed test indices in
+common/test_indices.txt, and the shared evaluate() / results writers.
+
+Outputs (plan.md section 4):
+    results/llm_preds.csv   id,y_true,y_pred,latency_ms   (invalid output = -1)
+    results/llm.json        shared results schema + invalid_outputs count
 
 Example (T4 GPU, 4-bit):
-    python -m llm.evaluate_llm --data path/to/test.tsv --4bit
-
-Rows come from Person A's fixed test subset if --indices is given (one TSV row
-position per line, e.g. common/test_indices.txt). Otherwise a seeded stratified
-sample of --n rows is used so the run is still repeatable.
+    python -m llm.evaluate_llm --4bit
 
 Auth: set HF_TOKEN in the environment if the model needs it; never hardcode it.
 """
 import argparse
-import csv
 import json
 import os
 import time
 
+from common.config import IDX_TO_LABEL, RESULTS_DIR
+from common.evaluate import build_results_dict, evaluate, save_predictions_csv, save_results_json
 from llm.inference import classify
 from llm.parser import INVALID
 from llm.prompt import DEFAULT_MODEL_ID, LABELS
-from llm.smoke_test import load_liar_tsv, make_generate_fn, stratified_sample
 
 LABEL_TO_IDX = {label: i for i, label in enumerate(LABELS)}
-INVALID_IDX = -1  # an invalid output is never a correct prediction
+INVALID_IDX = -1  # stored in the preds CSV; never equal to a real label
 
-# Cost assumption from plan.md: T4 at $0.35/hour plus 10% overhead.
-T4_USD_PER_HOUR = 0.35
+# Cost assumption from plan.md: T4 at $0.35/hour plus 10% overhead (same as the other models).
+T4_PRICE_PER_HOUR = 0.35
 OVERHEAD = 1.10
+TEST_INDICES_PATH = "common/test_indices.txt"
 
 
-def macro_f1(y_true: list[int], y_pred: list[int]) -> float:
-    """Macro-averaged F1 over all 6 labels (invalid predictions count as wrong)."""
-    scores = []
-    for c in range(len(LABELS)):
-        tp = sum(t == c and p == c for t, p in zip(y_true, y_pred))
-        fp = sum(t != c and p == c for t, p in zip(y_true, y_pred))
-        fn = sum(t == c and p != c for t, p in zip(y_true, y_pred))
-        denom = 2 * tp + fp + fn
-        scores.append(2 * tp / denom if denom else 0.0)
-    return sum(scores) / len(scores)
+def load_shared_rows(indices_path: str = TEST_INDICES_PATH) -> tuple[list[int], list[dict]]:
+    """Return (indices, rows) for the shared test subset, in the project label order."""
+    # Imported here so the pure helpers below can be tested without `datasets`.
+    from common.data_loader import get_test_indices, label_to_idx, load_liar, load_test_indices
+
+    test = load_liar()[2]
+    if os.path.exists(indices_path):
+        indices = load_test_indices(indices_path)
+    else:
+        # Same seed and function as the other models, so the rows still match.
+        print(f"WARNING: {indices_path} not found; regenerating the subset with the shared function.")
+        indices = get_test_indices(test)
+    rows = [
+        {"statement": test[i]["statement"], "y_true": label_to_idx(test[i]["label"])}
+        for i in indices
+    ]
+    return indices, rows
 
 
-def run_eval(rows: list[dict], generate_fn) -> list[dict]:
-    """Classify every row, timing each one. Returns one record per row."""
-    records = []
+def run_eval(rows: list[dict], generate_fn) -> tuple[list[int], list[float]]:
+    """Classify every row. Returns (predictions, latencies in ms); invalid -> -1."""
+    preds, latencies = [], []
     for r in rows:
         start = time.perf_counter()
-        pred = classify(r["statement"], generate_fn)
-        latency_ms = (time.perf_counter() - start) * 1000
-        records.append({
-            "id": r["id"],
-            "y_true": LABEL_TO_IDX[r["label"]],
-            "y_pred": LABEL_TO_IDX.get(pred, INVALID_IDX),
-            "latency_ms": round(latency_ms, 1),
-        })
-    return records
+        # No retry: decoding is greedy, so a second try would give the same answer.
+        label = classify(r["statement"], generate_fn, max_retries=0)
+        latencies.append((time.perf_counter() - start) * 1000)
+        preds.append(LABEL_TO_IDX.get(label, INVALID_IDX) if label != INVALID else INVALID_IDX)
+    return preds, latencies
 
 
-def summarize(records: list[dict], model_id: str, gpu: str, params: int | None) -> dict:
-    """Build the results JSON from per-row records."""
-    n = len(records)
-    y_true = [r["y_true"] for r in records]
-    y_pred = [r["y_pred"] for r in records]
-    avg_ms = sum(r["latency_ms"] for r in records) / n
-    # Cost per 1000 predictions = GPU time for 1000 samples * hourly rate.
-    cost_per_1k = (avg_ms * 1000 / 3_600_000) * T4_USD_PER_HOUR * OVERHEAD
-    return {
-        "model": "llm",
-        "accuracy": round(sum(t == p for t, p in zip(y_true, y_pred)) / n, 4),
-        "macro_f1": round(macro_f1(y_true, y_pred), 4),
-        "params": params,
-        "train_minutes": 0,
-        "gpu": gpu,
-        "avg_latency_ms": round(avg_ms, 1),
-        "est_cost_per_1k": round(cost_per_1k, 4),
-        "cost_assumption": "T4: $0.35/hour, includes 10% overhead",
-        "n_eval": n,
-        "invalid_outputs": sum(p == INVALID_IDX for p in y_pred),
-        "notes": f"Zero-shot, greedy decoding, model={model_id}",
-    }
+def score(y_true: list[int], preds: list[int]) -> dict:
+    """Shared evaluate(), with invalid outputs counted as wrong.
+
+    sklearn would treat -1 as an extra class and drag macro-F1 down, so each
+    invalid prediction is swapped for a label that is guaranteed to be wrong.
+    The real outputs (with -1) are still what gets written to the CSV.
+    """
+    scored = [p if p != INVALID_IDX else (t + 1) % len(LABELS) for t, p in zip(y_true, preds)]
+    return evaluate(y_true, scored)
 
 
-def write_results(records: list[dict], summary: dict, out_dir: str) -> None:
-    os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "llm_preds.csv"), "w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["id", "y_true", "y_pred", "latency_ms"])
-        w.writeheader()
-        w.writerows(records)
-    with open(os.path.join(out_dir, "llm.json"), "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
-
-
-def load_indices(path: str) -> list[int]:
-    with open(path, encoding="utf-8") as f:
-        return [int(line) for line in f if line.strip()]
+def cost_per_1k(avg_latency_ms: float) -> float:
+    """GPU cost of 1000 predictions at batch size 1."""
+    return avg_latency_ms / 1000 / 3600 * 1000 * T4_PRICE_PER_HOUR * OVERHEAD
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", required=True, help="path to LIAR test.tsv")
-    ap.add_argument("--indices", help="fixed test subset: one TSV row position per line")
-    ap.add_argument("--n", type=int, default=300, help="sample size if no --indices")
+    ap.add_argument("--indices", default=TEST_INDICES_PATH)
     ap.add_argument("--model", default=DEFAULT_MODEL_ID)
     ap.add_argument("--4bit", dest="use_4bit", action="store_true")
-    ap.add_argument("--out", default="results")
+    ap.add_argument("--out", default=RESULTS_DIR)
     args = ap.parse_args()
 
-    all_rows = load_liar_tsv(args.data)
-    if args.indices:
-        rows = [all_rows[i] for i in load_indices(args.indices)]
-    else:
-        rows = stratified_sample(all_rows, args.n)
+    import torch  # only needed for the GPU name
 
-    import torch  # only needed for the GPU name and parameter count
+    from llm.smoke_test import make_generate_fn
+
+    indices, rows = load_shared_rows(args.indices)
+    y_true = [r["y_true"] for r in rows]
 
     gen = make_generate_fn(args.model, args.use_4bit)
-    records = run_eval(rows, gen)
+    preds, latencies = run_eval(rows, gen)
 
+    metrics = score(y_true, preds)
+    avg_ms = sum(latencies) / len(latencies)
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
-    summary = summarize(records, args.model, gpu, params=None)
-    write_results(records, summary, args.out)
-    print(json.dumps(summary, indent=2))
+    results = build_results_dict(
+        model_name="llm",
+        metrics=metrics,
+        params=getattr(gen, "n_params", 0),
+        train_minutes=0,
+        gpu=gpu,
+        avg_latency_ms=round(avg_ms, 3),
+        est_cost_per_1k=round(cost_per_1k(avg_ms), 6),
+        cost_assumption="T4: $0.35/hour incl. 10% overhead; batch size 1",
+        invalid_outputs=sum(p == INVALID_IDX for p in preds),
+        notes=f"Zero-shot, greedy decoding, no retry, model={args.model}, 4bit={args.use_4bit}",
+    )
+    save_results_json(results, "llm", args.out)
+    save_predictions_csv(indices, y_true, preds, latencies, "llm", args.out)
+    print(json.dumps({k: results[k] for k in ("accuracy", "macro_f1", "invalid_outputs", "n_eval")}, indent=2))
 
 
 if __name__ == "__main__":

@@ -1,32 +1,33 @@
-"""Tests for the LLM evaluation bookkeeping (no GPU: the model is a fake)."""
-import csv
-import json
+"""Tests for the LLM evaluation bookkeeping (no GPU, no dataset download)."""
+from llm.evaluate_llm import INVALID_IDX, cost_per_1k, run_eval, score
 
-from llm.evaluate_llm import macro_f1, run_eval, summarize, write_results
-
+# project label ids: true=5, false=1, half-true=3
 ROWS = [
-    {"id": "1", "label": "true", "statement": "a"},
-    {"id": "2", "label": "false", "statement": "b"},
-    {"id": "3", "label": "half-true", "statement": "c"},
+    {"statement": "a", "y_true": 5},
+    {"statement": "b", "y_true": 1},
+    {"statement": "c", "y_true": 3},
 ]
 
 
-def test_macro_f1_perfect_and_zero():
-    assert macro_f1([0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5]) == 1.0
-    assert macro_f1([0, 1], [-1, -1]) == 0.0
+def test_run_eval_maps_labels_and_marks_invalid():
+    answers = iter(["true", "false", "garbage"])  # no retry: one call per row
+    preds, lat = run_eval(ROWS, lambda m: next(answers))
+    assert preds == [5, 1, INVALID_IDX]
+    assert len(lat) == 3 and all(x >= 0 for x in lat)
 
 
-def test_run_eval_and_summary(tmp_path):
-    answers = iter(["true", "false", "garbage", "garbage"])  # row 3 fails twice
-    records = run_eval(ROWS, lambda m: next(answers))
-    assert [r["y_pred"] for r in records] == [5, 1, -1]
+def test_score_counts_invalid_as_wrong_without_extra_class():
+    m = score([5, 1, 3], [5, 1, INVALID_IDX])
+    assert abs(m["accuracy"] - 2 / 3) < 1e-9
+    assert m["n_samples"] == 3
+    # shared schema fields other models also report
+    assert len(m["confusion_matrix"]) == 6
 
-    s = summarize(records, "fake-model", "CPU", None)
-    assert s["n_eval"] == 3
-    assert s["invalid_outputs"] == 1
-    assert abs(s["accuracy"] - 2 / 3) < 1e-3
 
-    write_results(records, s, str(tmp_path))
-    with open(tmp_path / "llm_preds.csv", newline="") as f:
-        assert next(csv.reader(f)) == ["id", "y_true", "y_pred", "latency_ms"]
-    assert json.loads((tmp_path / "llm.json").read_text())["model"] == "llm"
+def test_score_all_invalid_is_zero():
+    m = score([0, 1], [INVALID_IDX, INVALID_IDX])
+    assert m["accuracy"] == 0.0 and m["macro_f1"] == 0.0
+
+
+def test_cost_per_1k_matches_other_models_formula():
+    assert abs(cost_per_1k(1000.0) - (1000 / 1000 / 3600 * 1000 * 0.35 * 1.10)) < 1e-12

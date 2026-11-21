@@ -65,6 +65,7 @@ def make_generate_fn(model_id: str, use_4bit: bool):
         kwargs["device_map"] = "auto"
     model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
     model.eval()
+    n_params = sum(p.numel() for p in model.parameters())
 
     def generate_fn(messages: list[dict]) -> str:
         # Apply the model's own chat template so the system/user roles are right.
@@ -80,6 +81,8 @@ def make_generate_fn(model_id: str, use_4bit: bool):
         # Decode only the newly generated tokens, not the prompt.
         return tok.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
 
+    # Read by evaluate_llm for the results JSON (4-bit packs weights, so this is approximate).
+    generate_fn.n_params = n_params
     return generate_fn
 
 

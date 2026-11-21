@@ -60,10 +60,10 @@ def test_classify_ok():
 # First answer is junk, the retry returns a valid label.
 def test_classify_retries_once_then_succeeds():
     outputs = iter(["no idea", "false"])
-    assert classify("x", lambda m: next(outputs)) == "false"
+    assert classify("x", lambda m: next(outputs), max_retries=1) == "false"
 
 
-# Persistent junk -> "invalid" after exactly 2 attempts (1 try + 1 retry).
+# Persistent junk -> "invalid" after exactly 2 attempts (1 try + 1 explicit retry).
 def test_classify_marks_invalid_after_retry():
     calls = []
 
@@ -71,8 +71,26 @@ def test_classify_marks_invalid_after_retry():
         calls.append(1)
         return "garbage"
 
-    assert classify("x", gen) == INVALID
+    assert classify("x", gen, max_retries=1) == INVALID
     assert len(calls) == 2
+
+
+# Default is no retry (greedy decoding would just repeat the answer).
+def test_classify_default_makes_one_attempt():
+    calls = []
+
+    def gen(m):
+        calls.append(1)
+        return "garbage"
+
+    assert classify("x", gen) == INVALID
+    assert len(calls) == 1
+
+
+# A blank or over-long statement is one invalid sample; it must not raise.
+def test_classify_bad_statement_is_invalid_not_a_crash():
+    assert classify("   ", lambda m: "true") == INVALID
+    assert classify("x" * 2000, lambda m: "true") == INVALID
 
 
 # A crashing model (e.g. out of memory) must not abort the whole run.
