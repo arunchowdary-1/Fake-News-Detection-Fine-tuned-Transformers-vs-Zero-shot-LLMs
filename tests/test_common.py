@@ -81,6 +81,21 @@ class TestLabelConversion:
         assert label_to_idx("TRUE") == label_to_idx("true")
         assert label_to_idx("PANTS-FIRE") == label_to_idx("pants-fire")
 
+    def test_label_to_idx_hf_integer_ids(self):
+        """HF integer ids map by label name, not by raw value."""
+        assert label_to_idx(0) == LABEL_TO_IDX["false"]
+        assert label_to_idx(3) == LABEL_TO_IDX["true"]
+        assert label_to_idx(4) == LABEL_TO_IDX["barely-true"]
+        assert label_to_idx(5) == LABEL_TO_IDX["pants-fire"]
+
+    def test_label_to_idx_invalid_integer(self):
+        """Out-of-range ids are rejected."""
+        with pytest.raises(ValueError):
+            label_to_idx(6)
+        with pytest.raises(ValueError):
+            label_to_idx(-1)
+        assert not validate_label(6)
+
     def test_label_to_idx_invalid(self):
         """Test that invalid labels raise ValueError."""
         with pytest.raises(ValueError):
@@ -121,6 +136,84 @@ class TestMetadata:
         assert "Test statement." in result
 
 
+class TestMetadataRealSchema:
+    """Regression tests: the real HF LIAR rows use 5 separate *_counts columns."""
+
+    REAL_ROW = {
+        "statement": "Says the Annies List group supports third-trimester abortions.",
+        "subject": "abortion",
+        "speaker": "dwayne-bohac",
+        "party_affiliation": "republican",
+        "barely_true_counts": 3.0,
+        "false_counts": 1.0,
+        "half_true_counts": 4.0,
+        "mostly_true_counts": 2.0,
+        "pants_on_fire_counts": 7.0,
+    }
+
+    def test_history_uses_real_count_columns(self):
+        text = build_metadata_text(self.REAL_ROW)
+        assert "history: 3,1,4,2,7" in text
+        assert "history: 0,0,0,0,0" not in text
+
+    def test_none_and_blank_fields_do_not_crash(self):
+        row = dict(self.REAL_ROW, speaker=None, party_affiliation="  ", subject=None)
+        text = build_metadata_text(row)
+        assert "speaker: UNKNOWN" in text
+        assert "party: UNKNOWN" in text
+        assert "subject: UNKNOWN" in text
+
+    def test_none_counts_become_zero(self):
+        row = dict(self.REAL_ROW, false_counts=None)
+        assert "history: 3,0,4,2,7" in build_metadata_text(row)
+
+    def test_legacy_credit_history_list_still_supported(self):
+        row = {"statement": "x", "credit_history": [1, 2]}
+        assert "history: 1,2,0,0,0" in build_metadata_text(row)
+
+
+class TestTestSubset:
+    """Test the stratified test-subset selection on a synthetic dataset."""
+
+    @staticmethod
+    def _fake_dataset(counts):
+        labels = [i for i, n in enumerate(counts) for _ in range(n)]
+        return {"label": labels}
+
+    def test_exact_size_unique_and_sorted(self):
+        ds = self._fake_dataset([92, 250, 214, 267, 249, 211])
+        idx = get_test_indices(ds, subset_size=300)
+        assert len(idx) == 300
+        assert len(set(idx)) == 300
+        assert idx == sorted(idx)
+
+    def test_is_proportional_to_label_distribution(self):
+        counts = [92, 250, 214, 267, 249, 211]
+        ds = self._fake_dataset(counts)
+        idx = get_test_indices(ds, subset_size=300)
+        total = sum(counts)
+        for c, n in enumerate(counts):
+            got = sum(1 for i in idx if ds["label"][i] == c)
+            assert abs(got - n * 300 / total) <= 1
+
+    def test_deterministic_and_does_not_touch_global_rng(self):
+        import numpy as np
+        ds = self._fake_dataset([50, 50, 50, 50, 50, 50])
+        np.random.seed(123)
+        before = np.random.get_state()[1].copy()
+        a = get_test_indices(ds, subset_size=60)
+        assert (np.random.get_state()[1] == before).all()
+        assert a == get_test_indices(ds, subset_size=60)
+
+    def test_subset_larger_than_dataset_returns_all(self):
+        ds = self._fake_dataset([2, 2, 2, 2, 2, 2])
+        assert get_test_indices(ds, subset_size=100) == list(range(12))
+
+    def test_invalid_subset_size(self):
+        with pytest.raises(ValueError):
+            get_test_indices(self._fake_dataset([1, 1, 1, 1, 1, 1]), subset_size=0)
+
+
 class TestDataLoading:
     """Test LIAR dataset loading (integration tests)."""
 
@@ -138,6 +231,12 @@ class TestDataLoading:
                 assert "statement" in row
                 assert "label" in row
                 assert validate_label(row["label"])
+
+    def test_real_rows_carry_nonzero_history_in_metadata(self):
+        """Real LIAR rows must not all collapse to 'history: 0,0,0,0,0'."""
+        train, _, _ = load_liar()
+        texts = [build_metadata_text(train[i]) for i in range(200)]
+        assert any("history: 0,0,0,0,0" not in t for t in texts)
 
     def test_get_test_indices(self):
         """Test test subset generation."""
