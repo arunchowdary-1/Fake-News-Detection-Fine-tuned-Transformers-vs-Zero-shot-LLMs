@@ -32,6 +32,7 @@ from typing import List
 import numpy as np   # numeric helpers (shuffling, averaging, class counts)
 import torch
 import torch.nn as nn
+from datasets import Dataset   # used to build a tiny label-name dataset for the shared subset helper
 
 # Shared constants written by teammate Person A in common/config.py.
 # We IMPORT them instead of copying so everyone always uses the same label order,
@@ -100,7 +101,9 @@ def shared_test_indices(test_split) -> List[int]:
     # The shared get_test_indices() expects label NAMES (strings), but the HF
     # dataset stores ids, so we convert them to names first.
     names = test_split.features["label"].names
-    named = test_split.map(lambda r: {"label": names[r["label"]]}, features=None)
+    # Build a minimal dataset whose "label" column holds the label NAMES (strings).
+    # (Using .map() would NOT work: the column keeps its integer ClassLabel type.)
+    named = Dataset.from_dict({"label": [names[i] for i in test_split["label"]]})
     indices = get_test_indices(named)           # stratified, seed 42
     save_test_indices(indices, TEST_INDICES_PATH)  # save so everyone reuses it
     return indices
