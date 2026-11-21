@@ -96,3 +96,6 @@ scratch/
 
 # OS
 Thumbs.db
+
+# Claude Code local config (never commit)
+.claude/
