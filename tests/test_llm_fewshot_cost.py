@@ -125,3 +125,41 @@ def test_cost_analysis_accepts_bert_style_field_names(tmp_path):
          gpu_mem_inference_mb=1900, inference_sec_per_1000=14.7)
     r = load_rows(str(tmp_path))[0]
     assert r["gpu_peak_mem_mb"] == 1900 and r["seconds_per_1000"] == 14.7
+
+
+class _FakeCuda:
+    """Stand-in for torch.cuda: per-device calls raise, like the failing Kaggle torch build."""
+    def __init__(self, strict):
+        self.strict, self.reset_calls = strict, []
+
+    def device_count(self):
+        return 2
+
+    def reset_peak_memory_stats(self, device=None):
+        if device is not None and self.strict:
+            raise RuntimeError("Invalid device argument")
+        self.reset_calls.append(device)
+
+    def max_memory_allocated(self, device=None):
+        if device is not None and self.strict:
+            raise RuntimeError("Invalid device argument")
+        return 3 * 2**20 if device is None else 2 * 2**20
+
+
+class _FakeTorch:
+    def __init__(self, strict):
+        self.cuda = _FakeCuda(strict)
+
+    @staticmethod
+    def device(kind, i):
+        return (kind, i)
+
+
+def test_peak_memory_helpers_sum_devices_and_survive_rejected_device_args():
+    from llm.evaluate_llm import peak_memory_mb, reset_peak_memory
+    ok = _FakeTorch(strict=False)
+    reset_peak_memory(ok)
+    assert len(ok.cuda.reset_calls) == 2 and peak_memory_mb(ok) == 4.0  # 2 GPUs x 2 MB
+    bad = _FakeTorch(strict=True)
+    reset_peak_memory(bad)  # must not raise
+    assert bad.cuda.reset_calls == [None] and peak_memory_mb(bad) == 3.0

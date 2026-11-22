@@ -111,6 +111,28 @@ def score(y_true: list[int], preds: list[int]) -> dict:
     }
 
 
+def reset_peak_memory(torch) -> None:
+    """Reset peak-memory counters on every visible GPU (the model may be split across several).
+
+    Falls back to the current device if per-device calls are rejected by this torch build.
+    """
+    try:
+        for i in range(torch.cuda.device_count()):
+            torch.cuda.reset_peak_memory_stats(torch.device("cuda", i))
+    except Exception:
+        torch.cuda.reset_peak_memory_stats()
+
+
+def peak_memory_mb(torch) -> float:
+    """Peak allocated GPU memory in MB, summed over visible GPUs (current device on fallback)."""
+    try:
+        total = sum(torch.cuda.max_memory_allocated(torch.device("cuda", i))
+                    for i in range(torch.cuda.device_count()))
+    except Exception:
+        total = torch.cuda.max_memory_allocated()
+    return round(total / 2**20, 1)
+
+
 def cost_per_1k(avg_latency_ms: float) -> float:
     """GPU cost of 1000 predictions at batch size 1."""
     return avg_latency_ms / 1000 / 3600 * 1000 * T4_PRICE_PER_HOUR * OVERHEAD
@@ -142,8 +164,7 @@ def main() -> None:
 
     cuda = torch.cuda.is_available()
     if cuda:
-        for i in range(torch.cuda.device_count()):  # device_map="auto" may spread the model over GPUs
-            torch.cuda.reset_peak_memory_stats(i)
+        reset_peak_memory(torch)
     t0 = time.perf_counter()
     gen = make_generate_fn(args.model, args.use_4bit)
     load_s = time.perf_counter() - t0
@@ -174,7 +195,7 @@ def main() -> None:
         "infer_seconds_per_1000": round(avg_ms, 3),  # ms/sample == s per 1,000 samples
         "total_infer_seconds": round(sum(latencies) / 1000, 2),
         "load_seconds": round(load_s, 1),
-        "gpu_peak_mem_mb": round(sum(torch.cuda.max_memory_allocated(i) for i in range(torch.cuda.device_count())) / 2**20, 1) if cuda else None,
+        "gpu_peak_mem_mb": peak_memory_mb(torch) if cuda else None,
         "few_shot_examples": examples,
         "runtime_errors": inference.RUNTIME_ERRORS,  # failed generate calls (not parse failures)
         "confusion_matrix_with_invalid": metrics["confusion_matrix_with_invalid"],
