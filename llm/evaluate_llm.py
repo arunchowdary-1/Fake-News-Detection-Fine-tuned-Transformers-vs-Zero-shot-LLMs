@@ -20,8 +20,12 @@ import json
 import os
 import time
 
+from sklearn.metrics import (accuracy_score, classification_report, confusion_matrix, f1_score,
+                             precision_score, recall_score)
+
 from common.config import IDX_TO_LABEL, RESULTS_DIR
-from common.evaluate import build_results_dict, evaluate, save_predictions_csv, save_results_json
+from common.evaluate import build_results_dict, save_predictions_csv, save_results_json
+from llm import inference
 from llm.inference import classify
 from llm.parser import INVALID
 from llm.prompt import DEFAULT_MODEL_ID, LABELS
@@ -76,14 +80,35 @@ def run_eval(rows: list[dict], generate_fn, examples: list[dict] | None = None) 
 
 
 def score(y_true: list[int], preds: list[int]) -> dict:
-    """Shared evaluate(), with invalid outputs counted as wrong.
+    """Metrics with invalid outputs counted as wrong, without inventing predictions.
 
-    sklearn would treat -1 as an extra class and drag macro-F1 down, so each
-    invalid prediction is swapped for a label that is guaranteed to be wrong.
-    The real outputs (with -1) are still what gets written to the CSV.
+    An invalid output (-1) never equals a real label, so it is a miss for its true
+    class (lower recall/accuracy) but adds no false positive to any class. Metrics are
+    restricted to the 6 real labels, so -1 is not treated as an extra class.
+    `confusion_matrix` is 6x6 over valid predictions only (rows sum to support minus
+    invalid); `confusion_matrix_with_invalid` is 6x7, last column = invalid outputs.
+    Same keys as the shared evaluate().
     """
-    scored = [p if p != INVALID_IDX else (t + 1) % len(LABELS) for t, p in zip(y_true, preds)]
-    return evaluate(y_true, scored)
+    if len(y_true) != len(preds) or not y_true:
+        raise ValueError("y_true and preds must be non-empty and the same length")
+    labels = list(range(len(LABELS)))
+    cm = confusion_matrix(y_true, preds, labels=labels)
+    invalid_by_class = [sum(1 for t, p in zip(y_true, preds) if t == c and p == INVALID_IDX) for c in labels]
+    report = classification_report(
+        y_true, preds, labels=labels, target_names=[IDX_TO_LABEL[i] for i in labels],
+        output_dict=True, zero_division=0,
+    )
+    return {
+        "accuracy": float(accuracy_score(y_true, preds)),
+        "macro_f1": float(f1_score(y_true, preds, labels=labels, average="macro", zero_division=0)),
+        "weighted_f1": float(f1_score(y_true, preds, labels=labels, average="weighted", zero_division=0)),
+        "macro_precision": float(precision_score(y_true, preds, labels=labels, average="macro", zero_division=0)),
+        "macro_recall": float(recall_score(y_true, preds, labels=labels, average="macro", zero_division=0)),
+        "confusion_matrix": cm.tolist(),
+        "confusion_matrix_with_invalid": [row + [inv] for row, inv in zip(cm.tolist(), invalid_by_class)],
+        "per_class_metrics": report,
+        "n_samples": len(y_true),
+    }
 
 
 def cost_per_1k(avg_latency_ms: float) -> float:
@@ -151,6 +176,8 @@ def main() -> None:
         "load_seconds": round(load_s, 1),
         "gpu_peak_mem_mb": round(sum(torch.cuda.max_memory_allocated(i) for i in range(torch.cuda.device_count())) / 2**20, 1) if cuda else None,
         "few_shot_examples": examples,
+        "runtime_errors": inference.RUNTIME_ERRORS,  # failed generate calls (not parse failures)
+        "confusion_matrix_with_invalid": metrics["confusion_matrix_with_invalid"],
     })
     # JSON after every run, as the team rules require.
     save_results_json(results, run_name, args.out)

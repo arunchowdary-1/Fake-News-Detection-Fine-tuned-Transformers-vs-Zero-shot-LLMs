@@ -64,12 +64,17 @@ def load_rows(results_dir: str = RESULTS_DIR) -> list[dict]:
             "params": r["params"], "train_minutes": r["train_minutes"],
             "train_cost_usd": round(train_cost(r["train_minutes"]), 4),
             "ms_per_statement": r["avg_latency_ms"],
-            "seconds_per_1000": r.get("infer_seconds_per_1000", r["avg_latency_ms"]),
+            "seconds_per_1000": r.get("infer_seconds_per_1000") or r.get("inference_sec_per_1000") or r["avg_latency_ms"],
             "cost_per_1k_usd": r["est_cost_per_1k"],
-            "gpu": r["gpu"], "gpu_peak_mem_mb": r.get("gpu_peak_mem_mb"),
+            "gpu": r["gpu"], "gpu_peak_mem_mb": r.get("gpu_peak_mem_mb") or r.get("gpu_mem_inference_mb"),
             "invalid_outputs": r.get("invalid_outputs", 0), "n_eval": r["n_eval"],
         })
     return rows
+
+
+def _ratio(a: float, b: float) -> float | None:
+    """a / b rounded, or None when b is 0 (a cost that rounds to zero)."""
+    return round(a / b, 1) if b else None
 
 
 def add_comparisons(rows: list[dict]) -> list[dict]:
@@ -85,8 +90,8 @@ def add_comparisons(rows: list[dict]) -> list[dict]:
         out.append({
             "finetuned": r["name"], "vs_llm": ref["name"],
             "params_ratio": round(ref["params"] / r["params"], 1) if r["params"] else None,
-            "speedup": round(ref["seconds_per_1000"] / r["seconds_per_1000"], 1),
-            "cost_ratio": round(ref["cost_per_1k_usd"] / r["cost_per_1k_usd"], 1),
+            "speedup": _ratio(ref["seconds_per_1000"], r["seconds_per_1000"]),
+            "cost_ratio": _ratio(ref["cost_per_1k_usd"], r["cost_per_1k_usd"]),
             "macro_f1_gain": round(r["macro_f1"] - ref["macro_f1"], 4),
             "break_even_predictions": break_even_predictions(
                 r["train_cost_usd"], r["cost_per_1k_usd"], ref["cost_per_1k_usd"]),
@@ -110,8 +115,8 @@ def to_markdown(rows: list[dict], comps: list[dict]) -> str:
                   "|---|---|---|---|---|---|"]
         for c in comps:
             be = "never" if c["break_even_predictions"] is None else f"{c['break_even_predictions']:,.0f}"
-            lines.append(f"| {c['finetuned']} | {fmt(c['params_ratio'], '{}x')} | {c['speedup']}x | "
-                         f"{c['cost_ratio']}x | {c['macro_f1_gain']:+.3f} | {be} |")
+            lines.append(f"| {c['finetuned']} | {fmt(c['params_ratio'], '{}x')} | {fmt(c['speedup'], '{}x')} | "
+                         f"{fmt(c['cost_ratio'], '{}x')} | {c['macro_f1_gain']:+.3f} | {be} |")
     return "\n".join(lines) + "\n"
 
 

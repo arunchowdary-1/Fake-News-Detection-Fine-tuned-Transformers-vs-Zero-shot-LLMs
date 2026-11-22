@@ -8,7 +8,7 @@ Total: about 2 x (3 min model load + 300 statements x ~0.5-1.5 s) = roughly 25 m
 !git clone https://github.com/arunchowdary-1/Fake-News-Detection-Fine-tuned-Transformers-vs-Zero-shot-LLMs.git repo
 %cd repo
 !git checkout feat/llm-fewshot
-!pip install -q -U bitsandbytes accelerate transformers datasets scikit-learn
+!pip install -q -U bitsandbytes accelerate transformers 'datasets<4' scikit-learn
 ```
 
 ```python
@@ -30,6 +30,9 @@ from google.colab import drive; drive.mount('/content/drive')
 ```
 
 Notes
+- LIAR is a script dataset, so `datasets` must be `<4` (pinned above). If its download host is blocked (it returns 403 on Kaggle),
+  put the original `train/valid/test.tsv` in a folder (they are in `liar_data/` once PR #26 is merged) and run with
+  `LIAR_TSV_DIR=<folder>`; same splits (10,269 / 1,284 / 1,283).
 - If Colab is out of GPU, use Kaggle (2x T4): same commands; the 4-bit model fits on one T4 (~5.5 GB).
 - Too slow? Fallback is `--model Qwen/Qwen2.5-3B-Instruct`; say so in the report (the JSON records the model id).
 - Only `--limit` runs write `llm_*_limit.json`, so a quick check never overwrites a real result.

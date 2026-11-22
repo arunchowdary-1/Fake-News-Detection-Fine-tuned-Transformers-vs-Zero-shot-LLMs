@@ -4,10 +4,17 @@
 a plain function lets us unit-test this logic without a GPU, and lets the
 smoke test and the full run (#8) share the same code path.
 """
+import sys
 from typing import Callable
 
 from llm.parser import INVALID, ParseError, parse_output
 from llm.prompt import build_messages
+
+
+# Runtime (non-parse) failures are rare; print the first few so a systematic problem
+# (CUDA OOM, bad generate call) is visible instead of looking like a 100% invalid rate.
+RUNTIME_ERRORS = 0
+_MAX_LOGGED_ERRORS = 3
 
 
 def classify(
@@ -36,9 +43,13 @@ def classify(
         except ParseError:
             # Model answered, but not with exactly one label: try again.
             continue
-        except Exception:
+        except Exception as err:
             # Model/runtime failure (e.g. CUDA out of memory): don't crash the
-            # whole evaluation run, just count this sample as a failed attempt.
+            # whole evaluation run, count this sample as a failed attempt, but say why.
+            global RUNTIME_ERRORS
+            RUNTIME_ERRORS += 1
+            if RUNTIME_ERRORS <= _MAX_LOGGED_ERRORS:
+                print(f"classify: runtime error #{RUNTIME_ERRORS}: {type(err).__name__}: {err}", file=sys.stderr)
             continue
 
     # All attempts failed: record it so the invalid rate can be reported.

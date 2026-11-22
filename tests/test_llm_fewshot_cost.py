@@ -84,3 +84,44 @@ def test_read_liar_tsv_parses_original_format(tmp_path):
     assert cols["statement"] == ["A claim.", "Short row"]
     assert [label_to_idx(l) for l in cols["label"]] == [0, 5]
     assert cols["pants_on_fire_counts"] == [5, 0] and cols["barely_true_counts"] == [1, 0]
+
+
+def test_score_does_not_invent_predictions_for_invalid_outputs():
+    from llm.evaluate_llm import INVALID_IDX, score
+    m = score([0, 0, 1], [0, INVALID_IDX, 1])
+    assert abs(m["accuracy"] - 2 / 3) < 1e-9
+    # the invalid row must not appear as a prediction of any real class
+    assert m["confusion_matrix"][0] == [1, 0, 0, 0, 0, 0]
+    assert m["confusion_matrix"][1][1] == 1
+    assert m["per_class_metrics"]["false"]["precision"] == 1.0  # old code gave 0.5
+    # rows of the 6x7 matrix sum to class support; last column counts invalid outputs
+    wide = m["confusion_matrix_with_invalid"]
+    assert wide[0][6] == 1 and sum(wide[0]) == 2 and sum(wide[1]) == 1
+
+
+def test_classify_logs_runtime_errors(capsys):
+    from llm import inference
+
+    inference.RUNTIME_ERRORS = 0
+
+    def boom(messages):
+        raise RuntimeError("CUDA out of memory")
+
+    assert classify("q", boom) == "invalid"
+    assert inference.RUNTIME_ERRORS == 1
+    assert "CUDA out of memory" in capsys.readouterr().err
+
+
+def test_cost_analysis_zero_cost_does_not_divide_by_zero(tmp_path):
+    _res(tmp_path, "lstm", 0.2, 0.18, 900_000, 3.0, 2, 0.0)
+    _res(tmp_path, "llm_zeroshot", 0.2, 0.15, 7_600_000_000, 0, 500, 0.06)
+    comps = add_comparisons(load_rows(str(tmp_path)))
+    assert comps[0]["cost_ratio"] is None
+    main(str(tmp_path))  # must not raise while formatting
+
+
+def test_cost_analysis_accepts_bert_style_field_names(tmp_path):
+    _res(tmp_path, "bert_text", 0.25, 0.24, 110_000_000, 3.0, 10, 0.001,
+         gpu_mem_inference_mb=1900, inference_sec_per_1000=14.7)
+    r = load_rows(str(tmp_path))[0]
+    assert r["gpu_peak_mem_mb"] == 1900 and r["seconds_per_1000"] == 14.7
