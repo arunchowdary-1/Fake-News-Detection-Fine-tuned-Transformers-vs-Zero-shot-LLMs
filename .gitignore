@@ -96,3 +96,6 @@ scratch/
 
 # OS
 Thumbs.db
+
+# Allow the BERT Colab runner notebook
+!notebooks/run_bert_colab.ipynb
