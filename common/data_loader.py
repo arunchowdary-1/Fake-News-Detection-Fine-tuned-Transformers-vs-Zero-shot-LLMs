@@ -25,6 +25,44 @@ def _label_name(label) -> Optional[str]:
     return None
 
 
+# Column order of the original LIAR TSV files (no header row), named like the HF dataset.
+LIAR_TSV_COLUMNS = [
+    "id", "label", "statement", "subject", "speaker", "job_title", "state_info",
+    "party_affiliation", "barely_true_counts", "false_counts", "half_true_counts",
+    "mostly_true_counts", "pants_on_fire_counts", "context",
+]
+_LIAR_COUNT_COLUMNS = [c for c in LIAR_TSV_COLUMNS if c.endswith("_counts")]
+
+
+def read_liar_tsv(path: str) -> Dict[str, list]:
+    """Read one original LIAR TSV file into {column: values} (HF column names).
+
+    Labels stay strings ("pants-fire", ...), which label_to_idx() accepts. Short rows
+    are padded with empty strings; count columns become ints (blank -> 0).
+    """
+    cols: Dict[str, list] = {c: [] for c in LIAR_TSV_COLUMNS}
+    with open(path, encoding="utf-8", newline="") as f:
+        for line in f:
+            line = line.rstrip("\r\n")
+            if not line:
+                continue
+            parts = line.split("\t")
+            parts = (parts + [""] * len(LIAR_TSV_COLUMNS))[: len(LIAR_TSV_COLUMNS)]
+            for name, value in zip(LIAR_TSV_COLUMNS, parts):
+                if name in _LIAR_COUNT_COLUMNS:
+                    value = int(float(value)) if value.strip() else 0
+                cols[name].append(value)
+    return cols
+
+
+def load_liar_from_dir(directory: str) -> Tuple[Dataset, Dataset, Dataset]:
+    """Load LIAR from train.tsv / valid.tsv / test.tsv in `directory` (same row order as HF)."""
+    return tuple(
+        Dataset.from_dict(read_liar_tsv(os.path.join(directory, f"{name}.tsv")))
+        for name in ("train", "valid", "test")
+    )
+
+
 def load_liar() -> Tuple[Dataset, Dataset, Dataset]:
     """
     Load the LIAR dataset from Hugging Face.
@@ -32,6 +70,12 @@ def load_liar() -> Tuple[Dataset, Dataset, Dataset]:
     Returns:
         (train_dataset, val_dataset, test_dataset)
     """
+    # Offline route: set LIAR_TSV_DIR to a folder with the original train/valid/test.tsv
+    # (used on Kaggle, where the dataset's download host returns 403).
+    tsv_dir = os.environ.get("LIAR_TSV_DIR")
+    if tsv_dir:
+        print(f"Loading LIAR from TSV files in {tsv_dir}")
+        return load_liar_from_dir(tsv_dir)
     try:
         print("Loading LIAR dataset from Hugging Face...")
         # Newer datasets/huggingface_hub need the full repo id and trust_remote_code

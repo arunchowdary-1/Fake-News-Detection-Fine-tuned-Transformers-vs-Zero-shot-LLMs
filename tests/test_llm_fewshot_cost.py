@@ -70,3 +70,15 @@ def test_cost_analysis_end_to_end(tmp_path):
     assert abs(train_cost(60) - 0.385) < 1e-9
     main(str(tmp_path))
     assert (tmp_path / "cost_comparison.md").exists() and (tmp_path / "cost_vs_accuracy.csv").exists()
+
+
+def test_read_liar_tsv_parses_original_format(tmp_path):
+    from common.data_loader import label_to_idx, read_liar_tsv
+    row = "1.json\tpants-fire\tA claim.\tsubj\tsomeone\tGovernor\tTexas\trepublican\t1\t2\t3\t4\t5\tctx"
+    short = "2.json\ttrue\tShort row\tsubj"  # missing trailing columns
+    p = tmp_path / "t.tsv"
+    p.write_text(row + "\n" + short + "\n", encoding="utf-8")
+    cols = read_liar_tsv(str(p))
+    assert cols["statement"] == ["A claim.", "Short row"]
+    assert [label_to_idx(l) for l in cols["label"]] == [0, 5]
+    assert cols["pants_on_fire_counts"] == [5, 0] and cols["barely_true_counts"] == [1, 0]
