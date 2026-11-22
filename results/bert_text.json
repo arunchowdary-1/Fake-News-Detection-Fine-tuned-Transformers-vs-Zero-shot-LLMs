@@ -1,0 +1,192 @@
+{
+  "model": "bert_text",
+  "accuracy": 0.29333333333333333,
+  "macro_f1": 0.28855911435539283,
+  "weighted_f1": 0.2883715373922404,
+  "macro_precision": 0.28695476405953196,
+  "macro_recall": 0.2958959855059907,
+  "params": 109486854,
+  "train_minutes": 3.22,
+  "gpu": "Tesla T4",
+  "avg_latency_ms": 14.741,
+  "est_cost_per_1k": 0.001577,
+  "cost_assumption": "Priced at T4 rate $0.35/hour incl. 10% overhead; batch size 1 inference",
+  "n_eval": 300,
+  "invalid_outputs": 0,
+  "notes": "bert-base-uncased, mode=text, best epoch 3, class-weighted loss=True, fp16=True, max_len=128",
+  "confusion_matrix": [
+    [
+      6,
+      4,
+      4,
+      4,
+      2,
+      2
+    ],
+    [
+      3,
+      19,
+      11,
+      8,
+      7,
+      11
+    ],
+    [
+      3,
+      12,
+      13,
+      11,
+      6,
+      5
+    ],
+    [
+      7,
+      8,
+      9,
+      10,
+      12,
+      16
+    ],
+    [
+      2,
+      6,
+      9,
+      9,
+      18,
+      14
+    ],
+    [
+      2,
+      4,
+      5,
+      4,
+      12,
+      22
+    ]
+  ],
+  "per_class_metrics": {
+    "pants-fire": {
+      "precision": 0.2608695652173913,
+      "recall": 0.2727272727272727,
+      "f1-score": 0.26666666666666666,
+      "support": 22.0
+    },
+    "false": {
+      "precision": 0.3584905660377358,
+      "recall": 0.3220338983050847,
+      "f1-score": 0.3392857142857143,
+      "support": 59.0
+    },
+    "barely-true": {
+      "precision": 0.2549019607843137,
+      "recall": 0.26,
+      "f1-score": 0.25742574257425743,
+      "support": 50.0
+    },
+    "half-true": {
+      "precision": 0.21739130434782608,
+      "recall": 0.16129032258064516,
+      "f1-score": 0.18518518518518517,
+      "support": 62.0
+    },
+    "mostly-true": {
+      "precision": 0.3157894736842105,
+      "recall": 0.3103448275862069,
+      "f1-score": 0.3130434782608696,
+      "support": 58.0
+    },
+    "true": {
+      "precision": 0.3142857142857143,
+      "recall": 0.4489795918367347,
+      "f1-score": 0.3697478991596639,
+      "support": 49.0
+    },
+    "accuracy": 0.29333333333333333,
+    "macro avg": {
+      "precision": 0.28695476405953196,
+      "recall": 0.2958959855059907,
+      "f1-score": 0.28855911435539283,
+      "support": 300.0
+    },
+    "weighted avg": {
+      "precision": 0.2894307407115805,
+      "recall": 0.29333333333333333,
+      "f1-score": 0.2883715373922404,
+      "support": 300.0
+    }
+  },
+  "inference_sec_per_1000": 14.741,
+  "gpu_mem_train_mb": 2143.9,
+  "gpu_mem_inference_mb": 1897.8,
+  "full_test": {
+    "accuracy": 0.2727981293842556,
+    "macro_f1": 0.27722646117543986,
+    "n": 1283,
+    "confusion_matrix": [
+      [
+        35,
+        14,
+        19,
+        7,
+        10,
+        7
+      ],
+      [
+        27,
+        62,
+        49,
+        30,
+        33,
+        49
+      ],
+      [
+        16,
+        44,
+        62,
+        37,
+        27,
+        28
+      ],
+      [
+        20,
+        39,
+        51,
+        46,
+        44,
+        67
+      ],
+      [
+        9,
+        27,
+        34,
+        47,
+        61,
+        71
+      ],
+      [
+        10,
+        31,
+        24,
+        18,
+        44,
+        84
+      ]
+    ]
+  },
+  "val_best_macro_f1": 0.25871951735278537,
+  "hyperparams": {
+    "mode": "text",
+    "model_name": "bert-base-uncased",
+    "run_name": null,
+    "epochs": 3,
+    "patience": 2,
+    "batch_size": 16,
+    "lr": 2e-05,
+    "max_len": null,
+    "warmup": 0.1,
+    "weight_decay": 0.01,
+    "no_class_weights": false,
+    "no_fp16": false,
+    "max_train": null
+  }
+}

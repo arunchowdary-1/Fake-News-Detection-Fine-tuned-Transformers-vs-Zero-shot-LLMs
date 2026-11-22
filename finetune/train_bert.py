@@ -1,0 +1,247 @@
+"""
+finetune/train_bert.py  --  BERT fine-tuning on LIAR (Run 1: text, Run 2: meta)
+================================================================================
+
+HOW TO RUN (from the repository root, ideally on a Colab/Kaggle T4):
+    python -m finetune.train_bert --mode text     # Run 1: statement only
+    python -m finetune.train_bert --mode meta     # Run 2: metadata + statement
+    python -m finetune.train_bert --mode text --epochs 1 --max-train 200   # smoke test
+
+    # RoBERTa (Sandya): same script, different model + result name
+    python -m finetune.train_bert --mode text --model-name roberta-base --run-name roberta_text
+
+OUTPUT FILES (same schema as the LSTM, plus GPU-memory / per-1k-time extras):
+    results/<run-name>.json         default run names: bert_text, bert_meta
+    results/<run-name>_preds.csv    id,y_true,y_pred,latency_ms on the shared 300-row subset
+    checkpoints/<run-name>.pt       best weights (git-ignored)
+"""
+
+import argparse
+import os
+import time
+from typing import List, Tuple
+
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from transformers import get_linear_schedule_with_warmup
+
+from baselines.train import set_seed, to_project_labels, shared_test_indices
+from common.config import (
+    BATCH_SIZE_EVAL, BATCH_SIZE_TRAIN, CHECKPOINTS_DIR, LABEL_TO_IDX,
+    LEARNING_RATE_DEFAULT, MAX_LENGTH_TEXT, NUM_EPOCHS_DEFAULT, RANDOM_SEED, RESULTS_DIR,
+)
+from common.data_loader import load_liar
+from common.evaluate import build_results_dict, evaluate, save_predictions_csv, save_results_json
+from finetune.bert_model import (
+    DEFAULT_MODEL_NAME, EncodedDataset, build_texts, count_params,
+    load_model_and_tokenizer, make_collate,
+)
+
+T4_PRICE_PER_HOUR = 0.35   # same cost assumption as every other model
+OVERHEAD = 1.10
+
+
+def _sync(device: torch.device) -> None:
+    """Wait for queued GPU work so timings are honest."""
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+
+
+@torch.no_grad()
+def predict(model, loader, device, use_amp: bool) -> List[int]:
+    model.eval()
+    preds: List[int] = []
+    for batch in loader:
+        batch = {k: v.to(device) for k, v in batch.items() if k != "labels"}
+        with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
+            logits = model(**batch).logits
+        preds.extend(logits.argmax(dim=-1).tolist())
+    return preds
+
+
+@torch.no_grad()
+def predict_with_latency(model, texts, tokenizer, max_len, device, use_amp) -> Tuple[List[int], List[float]]:
+    """One statement at a time (batch size 1), like the demo app, timed per statement."""
+    model.eval()
+    preds, lat = [], []
+    # Warm-up so the first timed call doesn't include CUDA start-up cost.
+    warm = tokenizer(texts[0], truncation=True, max_length=max_len, return_tensors="pt").to(device)
+    model(**warm)
+    for t in texts:
+        _sync(device)
+        t0 = time.perf_counter()
+        enc = tokenizer(t, truncation=True, max_length=max_len, return_tensors="pt").to(device)
+        with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
+            logits = model(**enc).logits
+        preds.append(int(logits.argmax(dim=-1)))
+        _sync(device)
+        lat.append((time.perf_counter() - t0) * 1000)
+    return preds, lat
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Fine-tune an encoder on LIAR")
+    ap.add_argument("--mode", choices=["text", "meta"], required=True)
+    ap.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
+    ap.add_argument("--run-name", default=None, help="results file stem (default bert_<mode>)")
+    ap.add_argument("--epochs", type=int, default=NUM_EPOCHS_DEFAULT)
+    ap.add_argument("--patience", type=int, default=2, help="early stopping on val macro-F1")
+    ap.add_argument("--batch-size", type=int, default=BATCH_SIZE_TRAIN)
+    ap.add_argument("--lr", type=float, default=LEARNING_RATE_DEFAULT)
+    ap.add_argument("--max-len", type=int, default=None,
+                    help=f"default {MAX_LENGTH_TEXT} for text, 2x for meta")
+    ap.add_argument("--warmup", type=float, default=0.1, help="warm-up fraction of total steps")
+    ap.add_argument("--weight-decay", type=float, default=0.01)
+    ap.add_argument("--no-class-weights", action="store_true")
+    ap.add_argument("--no-fp16", action="store_true")
+    ap.add_argument("--max-train", type=int, default=None, help="use only N train rows (smoke test)")
+    args = ap.parse_args()
+
+    run_name = args.run_name or f"bert_{args.mode}"
+    max_len = args.max_len or (MAX_LENGTH_TEXT if args.mode == "text" else MAX_LENGTH_TEXT * 2)
+
+    set_seed(RANDOM_SEED)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_amp = device.type == "cuda" and not args.no_fp16
+    gpu_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
+    print(f"Device: {gpu_name} | fp16: {use_amp} | mode: {args.mode} | model: {args.model_name}")
+
+    # ---------- data (same split, same label order as every other model) ----------
+    try:
+        train, val, test = load_liar()
+    except Exception as e:   # script-based "liar" is unsupported on recent `datasets`
+        print(f"load_liar() failed ({e}); falling back to the official LIAR zip")
+        from finetune.liar_fallback import load_liar_from_zip
+        train, val, test = load_liar_from_zip()
+    print(f"Train {len(train)} | val {len(val)} | test {len(test)}")
+    y_train, y_val, y_test = to_project_labels(train), to_project_labels(val), to_project_labels(test)
+    if args.max_train:
+        train = train.select(range(args.max_train))
+        y_train = y_train[: args.max_train]
+
+    model, tokenizer = load_model_and_tokenizer(args.model_name)
+    sep = tokenizer.sep_token or "[SEP]"
+    texts = {n: build_texts(s, args.mode, sep) for n, s in (("train", train), ("val", val), ("test", test))}
+    print("Example input:", texts["train"][0][:200])
+
+    collate = make_collate(tokenizer)
+    mk = lambda name, ys, bs, shuffle: DataLoader(
+        EncodedDataset(texts[name], ys, tokenizer, max_len),
+        batch_size=bs, shuffle=shuffle, collate_fn=collate)
+    g = torch.Generator().manual_seed(RANDOM_SEED)
+    train_loader = DataLoader(EncodedDataset(texts["train"], y_train, tokenizer, max_len),
+                              batch_size=args.batch_size, shuffle=True, collate_fn=collate, generator=g)
+    val_loader = mk("val", y_val, BATCH_SIZE_EVAL, False)
+    test_loader = mk("test", y_test, BATCH_SIZE_EVAL, False)
+
+    model.to(device)
+    n_params = count_params(model)
+    print(f"Parameters: {n_params:,}")
+
+    # ---------- loss / optimiser / schedule ----------
+    weights = None
+    if not args.no_class_weights:
+        counts = np.bincount(y_train, minlength=len(LABEL_TO_IDX))
+        weights = torch.tensor(counts.sum() / (len(counts) * counts), dtype=torch.float, device=device)
+    loss_fn = nn.CrossEntropyLoss(weight=weights)
+    no_decay = ("bias", "LayerNorm.weight")
+    groups = [
+        {"params": [p for n, p in model.named_parameters() if not any(k in n for k in no_decay)],
+         "weight_decay": args.weight_decay},
+        {"params": [p for n, p in model.named_parameters() if any(k in n for k in no_decay)],
+         "weight_decay": 0.0},
+    ]
+    opt = torch.optim.AdamW(groups, lr=args.lr)
+    total_steps = len(train_loader) * args.epochs
+    sched = get_linear_schedule_with_warmup(opt, int(args.warmup * total_steps), total_steps)
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+
+    # ---------- training with early stopping on val macro-F1 ----------
+    os.makedirs(CHECKPOINTS_DIR, exist_ok=True)
+    ckpt_path = os.path.join(CHECKPOINTS_DIR, f"{run_name}.pt")
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+    best_f1, best_epoch, bad = -1.0, 0, 0
+    t_start = time.time()
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        running = 0.0
+        for batch in train_loader:
+            batch = {k: v.to(device) for k, v in batch.items()}
+            labels = batch.pop("labels")
+            opt.zero_grad(set_to_none=True)
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
+                logits = model(**batch).logits
+            loss = loss_fn(logits.float(), labels)
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt)
+            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            scaler.step(opt)
+            scaler.update()
+            sched.step()
+            running += loss.item() * len(labels)
+        val_m = evaluate(y_val, predict(model, val_loader, device, use_amp))
+        print(f"epoch {epoch} | loss {running / len(train_loader.dataset):.4f} | "
+              f"val acc {val_m['accuracy']:.4f} macro-F1 {val_m['macro_f1']:.4f}")
+        if val_m["macro_f1"] > best_f1:
+            best_f1, best_epoch, bad = val_m["macro_f1"], epoch, 0
+            torch.save({"state_dict": model.state_dict(), "args": vars(args)}, ckpt_path)
+        else:
+            bad += 1
+            if bad >= args.patience:
+                print(f"Early stopping (best epoch {best_epoch})")
+                break
+    _sync(device)
+    train_minutes = (time.time() - t_start) / 60
+    train_mem_mb = torch.cuda.max_memory_allocated() / 2**20 if device.type == "cuda" else 0.0
+
+    # ---------- final evaluation with the best epoch ----------
+    model.load_state_dict(torch.load(ckpt_path, map_location=device)["state_dict"])
+    full_m = evaluate(y_test, predict(model, test_loader, device, use_amp))
+
+    idx = shared_test_indices(test)
+    sub_texts, sub_y = [texts["test"][i] for i in idx], [y_test[i] for i in idx]
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+    sub_pred, lat = predict_with_latency(model, sub_texts, tokenizer, max_len, device, use_amp)
+    infer_mem_mb = torch.cuda.max_memory_allocated() / 2**20 if device.type == "cuda" else 0.0
+    sub_m = evaluate(sub_y, sub_pred)
+
+    avg_lat = float(np.mean(lat))
+    cost_per_1k = avg_lat / 1000 / 3600 * 1000 * T4_PRICE_PER_HOUR * OVERHEAD
+
+    results = build_results_dict(
+        model_name=run_name,
+        metrics=sub_m,
+        params=n_params,
+        train_minutes=round(train_minutes, 2),
+        gpu=gpu_name,
+        avg_latency_ms=round(avg_lat, 3),
+        est_cost_per_1k=round(cost_per_1k, 6),
+        cost_assumption="Priced at T4 rate $0.35/hour incl. 10% overhead; batch size 1 inference",
+        notes=f"{args.model_name}, mode={args.mode}, best epoch {best_epoch}, "
+              f"class-weighted loss={not args.no_class_weights}, fp16={use_amp}, max_len={max_len}",
+    )
+    # Extra fields requested in the project brief (additive, schema stays compatible):
+    results["inference_sec_per_1000"] = round(avg_lat, 3)   # ms/statement == seconds per 1,000
+    results["infer_seconds_per_1000"] = round(avg_lat, 3)   # same key the LLM results / cost_analysis use
+    results["gpu_peak_mem_mb"] = round(max(train_mem_mb, infer_mem_mb), 1)
+    results["gpu_mem_train_mb"] = round(train_mem_mb, 1)
+    results["gpu_mem_inference_mb"] = round(infer_mem_mb, 1)
+    results["full_test"] = {"accuracy": full_m["accuracy"], "macro_f1": full_m["macro_f1"],
+                            "n": len(y_test), "confusion_matrix": full_m["confusion_matrix"]}
+    results["val_best_macro_f1"] = best_f1
+    results["hyperparams"] = vars(args)
+
+    save_results_json(results, run_name, RESULTS_DIR)
+    save_predictions_csv(idx, sub_y, sub_pred, lat, run_name, RESULTS_DIR)
+    print(f"Subset ({len(idx)}): acc {sub_m['accuracy']:.4f} macro-F1 {sub_m['macro_f1']:.4f} | "
+          f"full test: acc {full_m['accuracy']:.4f} macro-F1 {full_m['macro_f1']:.4f} | "
+          f"latency {avg_lat:.1f} ms | train {train_minutes:.1f} min | "
+          f"GPU mem train {train_mem_mb:.0f} MB / infer {infer_mem_mb:.0f} MB")
+
+
+if __name__ == "__main__":
+    main()
