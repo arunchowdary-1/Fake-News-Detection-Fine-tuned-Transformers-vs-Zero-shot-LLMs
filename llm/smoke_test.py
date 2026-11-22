@@ -68,7 +68,9 @@ def make_generate_fn(model_id: str, use_4bit: bool):
         from transformers import BitsAndBytesConfig
 
         kwargs["quantization_config"] = BitsAndBytesConfig(
-            load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16
+            # fp4 is the bitsandbytes default; set explicitly so the label saved in the results
+            # JSON ("4bit-fp4") cannot drift from what was actually used.
+            load_in_4bit=True, bnb_4bit_quant_type="fp4", bnb_4bit_compute_dtype=torch.float16
         )
         kwargs["device_map"] = "auto"
     model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)

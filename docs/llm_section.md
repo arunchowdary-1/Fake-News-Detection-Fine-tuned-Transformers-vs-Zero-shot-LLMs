@@ -2,7 +2,7 @@
 
 ## Method
 
-We prompt **Qwen2.5-7B-Instruct** (7.6B parameters), loaded in **4-bit NF4** with bitsandbytes, with no
+We prompt **Qwen2.5-7B-Instruct** (7.6B parameters), loaded in **4-bit FP4** (the bitsandbytes default; NF4 is usually slightly more accurate and was not tested) with no
 fine-tuning. Each statement is classified into the six LIAR labels (pants-fire, false, barely-true,
 half-true, mostly-true, true) by a chat prompt whose system message defines the task and requires a
 label-only answer. Decoding is greedy (`max_new_tokens=12`), so runs are deterministic.

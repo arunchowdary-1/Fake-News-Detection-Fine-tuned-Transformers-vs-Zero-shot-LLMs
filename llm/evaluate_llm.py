@@ -217,7 +217,7 @@ def main() -> None:
     results.update({
         "mode": args.mode,
         "llm_model_id": args.model,
-        "quantization": "4bit-nf4" if args.use_4bit else "none",
+        "quantization": "4bit-fp4" if args.use_4bit else "none",
         "infer_seconds_per_1000": round(avg_ms, 3),  # ms/sample == s per 1,000 samples
         "total_infer_seconds": round(sum(latencies) / 1000, 2),
         "load_seconds": round(load_s, 1),
