@@ -1,0 +1,188 @@
+{
+  "model": "llm_zeroshot",
+  "accuracy": 0.16666666666666666,
+  "macro_f1": 0.12564803002749061,
+  "weighted_f1": 0.12317558488104649,
+  "macro_precision": 0.15266344279502173,
+  "macro_recall": 0.21963574298021774,
+  "params": 7615616512,
+  "train_minutes": 0,
+  "gpu": "Tesla T4",
+  "avg_latency_ms": 393.461,
+  "est_cost_per_1k": 0.042079,
+  "cost_assumption": "T4: $0.35/hour incl. 10% overhead; batch size 1",
+  "n_eval": 300,
+  "invalid_outputs": 1,
+  "notes": "zeroshot, greedy decoding, no retry, model=Qwen/Qwen2.5-7B-Instruct, 4bit=True",
+  "confusion_matrix": [
+    [
+      17,
+      2,
+      0,
+      2,
+      1,
+      0
+    ],
+    [
+      36,
+      5,
+      2,
+      11,
+      3,
+      1
+    ],
+    [
+      21,
+      7,
+      0,
+      15,
+      6,
+      1
+    ],
+    [
+      28,
+      6,
+      1,
+      23,
+      4,
+      0
+    ],
+    [
+      20,
+      11,
+      2,
+      20,
+      4,
+      1
+    ],
+    [
+      14,
+      7,
+      0,
+      19,
+      8,
+      1
+    ]
+  ],
+  "per_class_metrics": {
+    "pants-fire": {
+      "precision": 0.125,
+      "recall": 0.7727272727272727,
+      "f1-score": 0.21518987341772153,
+      "support": 22.0
+    },
+    "false": {
+      "precision": 0.13157894736842105,
+      "recall": 0.0847457627118644,
+      "f1-score": 0.10309278350515463,
+      "support": 59.0
+    },
+    "barely-true": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 50.0
+    },
+    "half-true": {
+      "precision": 0.25555555555555554,
+      "recall": 0.3709677419354839,
+      "f1-score": 0.3026315789473684,
+      "support": 62.0
+    },
+    "mostly-true": {
+      "precision": 0.15384615384615385,
+      "recall": 0.06896551724137931,
+      "f1-score": 0.09523809523809523,
+      "support": 58.0
+    },
+    "true": {
+      "precision": 0.25,
+      "recall": 0.02040816326530612,
+      "f1-score": 0.03773584905660377,
+      "support": 49.0
+    },
+    "micro avg": {
+      "precision": 0.16722408026755853,
+      "recall": 0.16666666666666666,
+      "f1-score": 0.1669449081803005,
+      "support": 300.0
+    },
+    "macro avg": {
+      "precision": 0.15266344279502173,
+      "recall": 0.21963574298021774,
+      "f1-score": 0.12564803002749061,
+      "support": 300.0
+    },
+    "weighted avg": {
+      "precision": 0.15843559754086067,
+      "recall": 0.16666666666666666,
+      "f1-score": 0.12317558488104649,
+      "support": 300.0
+    }
+  },
+  "mode": "zeroshot",
+  "llm_model_id": "Qwen/Qwen2.5-7B-Instruct",
+  "quantization": "4bit-fp4",
+  "infer_seconds_per_1000": 393.461,
+  "total_infer_seconds": 118.04,
+  "load_seconds": 10.7,
+  "gpu_peak_mem_mb": 5743.4,
+  "few_shot_examples": null,
+  "runtime_errors": 0,
+  "confusion_matrix_with_invalid": [
+    [
+      17,
+      2,
+      0,
+      2,
+      1,
+      0,
+      0
+    ],
+    [
+      36,
+      5,
+      2,
+      11,
+      3,
+      1,
+      1
+    ],
+    [
+      21,
+      7,
+      0,
+      15,
+      6,
+      1,
+      0
+    ],
+    [
+      28,
+      6,
+      1,
+      23,
+      4,
+      0,
+      0
+    ],
+    [
+      20,
+      11,
+      2,
+      20,
+      4,
+      1,
+      0
+    ],
+    [
+      14,
+      7,
+      0,
+      19,
+      8,
+      1,
+      0
+    ]
+  ]
+}

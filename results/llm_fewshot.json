@@ -1,0 +1,208 @@
+{
+  "model": "llm_fewshot",
+  "accuracy": 0.25,
+  "macro_f1": 0.1827485530970202,
+  "weighted_f1": 0.18768603662251876,
+  "macro_precision": 0.19031171281832182,
+  "macro_recall": 0.23575915817890356,
+  "params": 7615616512,
+  "train_minutes": 0,
+  "gpu": "Tesla T4",
+  "avg_latency_ms": 661.33,
+  "est_cost_per_1k": 0.070726,
+  "cost_assumption": "T4: $0.35/hour incl. 10% overhead; batch size 1",
+  "n_eval": 300,
+  "invalid_outputs": 0,
+  "notes": "fewshot, greedy decoding, no retry, model=Qwen/Qwen2.5-7B-Instruct, 4bit=True, 6 few-shot examples (1/class, train split, seed 42)",
+  "confusion_matrix": [
+    [
+      5,
+      11,
+      2,
+      2,
+      0,
+      2
+    ],
+    [
+      9,
+      35,
+      0,
+      12,
+      0,
+      3
+    ],
+    [
+      5,
+      25,
+      1,
+      12,
+      0,
+      7
+    ],
+    [
+      8,
+      23,
+      0,
+      28,
+      0,
+      3
+    ],
+    [
+      0,
+      33,
+      2,
+      17,
+      0,
+      6
+    ],
+    [
+      0,
+      19,
+      0,
+      24,
+      0,
+      6
+    ]
+  ],
+  "per_class_metrics": {
+    "pants-fire": {
+      "precision": 0.18518518518518517,
+      "recall": 0.22727272727272727,
+      "f1-score": 0.20408163265306123,
+      "support": 22.0
+    },
+    "false": {
+      "precision": 0.23972602739726026,
+      "recall": 0.5932203389830508,
+      "f1-score": 0.34146341463414637,
+      "support": 59.0
+    },
+    "barely-true": {
+      "precision": 0.2,
+      "recall": 0.02,
+      "f1-score": 0.03636363636363636,
+      "support": 50.0
+    },
+    "half-true": {
+      "precision": 0.29473684210526313,
+      "recall": 0.45161290322580644,
+      "f1-score": 0.35668789808917195,
+      "support": 62.0
+    },
+    "mostly-true": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 58.0
+    },
+    "true": {
+      "precision": 0.2222222222222222,
+      "recall": 0.12244897959183673,
+      "f1-score": 0.15789473684210525,
+      "support": 49.0
+    },
+    "accuracy": 0.25,
+    "macro avg": {
+      "precision": 0.19031171281832182,
+      "recall": 0.23575915817890356,
+      "f1-score": 0.1827485530970202,
+      "support": 300.0
+    },
+    "weighted avg": {
+      "precision": 0.19126827596642543,
+      "recall": 0.25,
+      "f1-score": 0.18768603662251876,
+      "support": 300.0
+    }
+  },
+  "mode": "fewshot",
+  "llm_model_id": "Qwen/Qwen2.5-7B-Instruct",
+  "quantization": "4bit-fp4",
+  "infer_seconds_per_1000": 661.33,
+  "total_infer_seconds": 198.4,
+  "load_seconds": 10.1,
+  "gpu_peak_mem_mb": 5788.6,
+  "few_shot_examples": [
+    {
+      "statement": "The state Legislature attempted to \"outlaw stem cell research, passes bills about microchips in the brain, and talks about seceding from the Union.\"",
+      "label": "mostly-true"
+    },
+    {
+      "statement": "Sen. George LeMieux voted to let oil companies off the hook and overturn pollution rules.",
+      "label": "half-true"
+    },
+    {
+      "statement": "The states tax burden has, according to census figures released today, cost our state another 190,000 residents in 2009.",
+      "label": "false"
+    },
+    {
+      "statement": "Travis County residents trusted me to take on Tom DeLay and we won.",
+      "label": "barely-true"
+    },
+    {
+      "statement": "Within the three miles surrounding the University Circle area, infant mortality exceeds some Third World countries.",
+      "label": "true"
+    },
+    {
+      "statement": "Says former Federal Reserve Chairman Alan Greenspan said that if the workers are more insecure, thats very healthy for the society because theyll serve the masters gladly and passively.",
+      "label": "pants-fire"
+    }
+  ],
+  "runtime_errors": 0,
+  "confusion_matrix_with_invalid": [
+    [
+      5,
+      11,
+      2,
+      2,
+      0,
+      2,
+      0
+    ],
+    [
+      9,
+      35,
+      0,
+      12,
+      0,
+      3,
+      0
+    ],
+    [
+      5,
+      25,
+      1,
+      12,
+      0,
+      7,
+      0
+    ],
+    [
+      8,
+      23,
+      0,
+      28,
+      0,
+      3,
+      0
+    ],
+    [
+      0,
+      33,
+      2,
+      17,
+      0,
+      6,
+      0
+    ],
+    [
+      0,
+      19,
+      0,
+      24,
+      0,
+      6,
+      0
+    ]
+  ]
+}

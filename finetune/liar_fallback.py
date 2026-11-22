@@ -19,6 +19,8 @@ from common.data_loader import HF_LIAR_LABEL_NAMES
 
 LIAR_ZIP_URL = "https://www.cs.ucsb.edu/~william/data/liar_dataset.zip"
 
+# The official .tsv files have no header row; this is their fixed column order, and the
+# names match the Hugging Face copy so downstream code works on either source.
 COLUMNS = [
     "id", "label", "statement", "subject", "speaker", "job_title", "state_info",
     "party_affiliation", "barely_true_counts", "false_counts", "half_true_counts",
@@ -36,11 +38,14 @@ def parse_tsv(text: str) -> Dict[str, List]:
         parts = line.split("\t")
         parts = (parts + [""] * len(COLUMNS))[: len(COLUMNS)]   # tolerate short rows
         for name, value in zip(COLUMNS, parts):
+            # Labels use HF integer ids (not project ids) on purpose: to_project_labels
+            # converts both sources the same way, via the label name.
             if name == "label":
                 value = HF_LIAR_LABEL_NAMES.index(value.strip().lower())
             elif name in COUNT_COLUMNS:
                 value = float(value) if value.strip() else 0.0
             elif name == "id":
+                # Raw ids carry a ".json" suffix; drop it to keep just the statement id.
                 value = value.replace(".json", "")
             cols[name].append(value)
     return cols
@@ -55,6 +60,7 @@ def _read_tsv_texts(cache_dir: str) -> list:
     Prefers the original files committed in the repo (LIAR_TSV_DIR, default `liar_data/`);
     only downloads the official zip if they are missing.
     """
+    # Local files first so no network is needed and the exact committed data is used.
     tsv_dir = os.environ.get("LIAR_TSV_DIR", "liar_data")
     if all(os.path.exists(os.path.join(tsv_dir, f)) for f in TSV_FILES):
         print(f"Reading LIAR from {tsv_dir}/")
@@ -71,8 +77,11 @@ def _read_tsv_texts(cache_dir: str) -> list:
 
 def load_liar_from_zip(cache_dir: str = "data/"):
     """Return (train, val, test) as `datasets.Dataset` objects."""
+    # Imported here so the module can be imported (e.g. for parse_tsv) without `datasets`.
     from datasets import ClassLabel, Dataset, Features, Value
 
+    # Explicit features keep the label column a ClassLabel, which to_project_labels needs
+    # (it calls int2str), and make counts float32 like the HF copy.
     feats = Features({
         c: (ClassLabel(names=HF_LIAR_LABEL_NAMES) if c == "label"
             else Value("float32") if c in COUNT_COLUMNS else Value("string"))

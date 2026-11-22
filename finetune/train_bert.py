@@ -40,7 +40,7 @@ from finetune.bert_model import (
 )
 
 T4_PRICE_PER_HOUR = 0.35   # same cost assumption as every other model
-OVERHEAD = 1.10
+OVERHEAD = 1.10            # +10% on top of the hourly price (same as the other models)
 
 
 def _sync(device: torch.device) -> None:
@@ -51,6 +51,7 @@ def _sync(device: torch.device) -> None:
 
 @torch.no_grad()
 def predict(model, loader, device, use_amp: bool) -> List[int]:
+    """Batched argmax predictions (project label ids); used for validation and full test."""
     model.eval()
     preds: List[int] = []
     for batch in loader:
@@ -66,10 +67,14 @@ def predict_with_latency(model, texts, tokenizer, max_len, device, use_amp) -> T
     """One statement at a time (batch size 1), like the demo app, timed per statement."""
     model.eval()
     preds, lat = [], []
-    # Warm-up so the first timed call doesn't include CUDA start-up cost.
+    # Warm-up so the first timed call doesn't include CUDA start-up cost (context creation,
+    # kernel loading), which would inflate the average latency.
     warm = tokenizer(texts[0], truncation=True, max_length=max_len, return_tensors="pt").to(device)
     model(**warm)
     for t in texts:
+        # CUDA calls are asynchronous: sync before starting the clock so earlier queued work
+        # isn't charged to this statement, and again before stopping it so the GPU work
+        # is finished. The timed span includes tokenisation, as in real use.
         _sync(device)
         t0 = time.perf_counter()
         enc = tokenizer(t, truncation=True, max_length=max_len, return_tensors="pt").to(device)
@@ -82,6 +87,7 @@ def predict_with_latency(model, texts, tokenizer, max_len, device, use_amp) -> T
 
 
 def main():
+    """Train with early stopping on val macro-F1, then evaluate and write results files."""
     ap = argparse.ArgumentParser(description="Fine-tune an encoder on LIAR")
     ap.add_argument("--mode", choices=["text", "meta"], required=True)
     ap.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
@@ -100,10 +106,12 @@ def main():
     args = ap.parse_args()
 
     run_name = args.run_name or f"bert_{args.mode}"
+    # Meta mode gets twice the length because the metadata prefix is prepended to the statement.
     max_len = args.max_len or (MAX_LENGTH_TEXT if args.mode == "text" else MAX_LENGTH_TEXT * 2)
 
-    set_seed(RANDOM_SEED)
+    set_seed(RANDOM_SEED)   # same seed as every other model for comparable runs
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # fp16 autocast speeds up training and cuts memory on a T4; CPU runs stay in fp32.
     use_amp = device.type == "cuda" and not args.no_fp16
     gpu_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
     print(f"Device: {gpu_name} | fp16: {use_amp} | mode: {args.mode} | model: {args.model_name}")
@@ -116,12 +124,14 @@ def main():
         from finetune.liar_fallback import load_liar_from_zip
         train, val, test = load_liar_from_zip()
     print(f"Train {len(train)} | val {len(val)} | test {len(test)}")
+    # Go through the project label order, not the raw HF ids, so results are comparable.
     y_train, y_val, y_test = to_project_labels(train), to_project_labels(val), to_project_labels(test)
     if args.max_train:
         train = train.select(range(args.max_train))
         y_train = y_train[: args.max_train]
 
     model, tokenizer = load_model_and_tokenizer(args.model_name)
+    # Use the model's own separator (BERT "[SEP]", RoBERTa "</s>") between metadata and statement.
     sep = tokenizer.sep_token or "[SEP]"
     texts = {n: build_texts(s, args.mode, sep) for n, s in (("train", train), ("val", val), ("test", test))}
     print("Example input:", texts["train"][0][:200])
@@ -130,6 +140,7 @@ def main():
     mk = lambda name, ys, bs, shuffle: DataLoader(
         EncodedDataset(texts[name], ys, tokenizer, max_len),
         batch_size=bs, shuffle=shuffle, collate_fn=collate)
+    # Seeded generator makes the training shuffle order reproducible; eval loaders don't shuffle.
     g = torch.Generator().manual_seed(RANDOM_SEED)
     train_loader = DataLoader(EncodedDataset(texts["train"], y_train, tokenizer, max_len),
                               batch_size=args.batch_size, shuffle=True, collate_fn=collate, generator=g)
@@ -141,11 +152,14 @@ def main():
     print(f"Parameters: {n_params:,}")
 
     # ---------- loss / optimiser / schedule ----------
+    # LIAR classes are imbalanced; inverse-frequency weights (n / (k * count)) stop the model
+    # ignoring rare classes, which matters because macro-F1 weighs all classes equally.
     weights = None
     if not args.no_class_weights:
         counts = np.bincount(y_train, minlength=len(LABEL_TO_IDX))
         weights = torch.tensor(counts.sum() / (len(counts) * counts), dtype=torch.float, device=device)
     loss_fn = nn.CrossEntropyLoss(weight=weights)
+    # Standard BERT recipe: no weight decay on biases and LayerNorm weights.
     no_decay = ("bias", "LayerNorm.weight")
     groups = [
         {"params": [p for n, p in model.named_parameters() if not any(k in n for k in no_decay)],
@@ -154,13 +168,16 @@ def main():
          "weight_decay": 0.0},
     ]
     opt = torch.optim.AdamW(groups, lr=args.lr)
+    # Linear warm-up then linear decay; warm-up avoids large early updates to pretrained weights.
     total_steps = len(train_loader) * args.epochs
     sched = get_linear_schedule_with_warmup(opt, int(args.warmup * total_steps), total_steps)
+    # Loss scaling keeps small fp16 gradients from underflowing; no-op when fp16 is off.
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
     # ---------- training with early stopping on val macro-F1 ----------
     os.makedirs(CHECKPOINTS_DIR, exist_ok=True)
     ckpt_path = os.path.join(CHECKPOINTS_DIR, f"{run_name}.pt")
+    # Reset so the reported training memory covers training only.
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats()
     best_f1, best_epoch, bad = -1.0, 0, 0
@@ -174,17 +191,21 @@ def main():
             opt.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
                 logits = model(**batch).logits
-            loss = loss_fn(logits.float(), labels)
+            loss = loss_fn(logits.float(), labels)   # loss in fp32 for numerical stability
             scaler.scale(loss).backward()
-            scaler.unscale_(opt)
+            scaler.unscale_(opt)   # unscale first so the clip threshold applies to true gradients
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(opt)
             scaler.update()
             sched.step()
             running += loss.item() * len(labels)
+        # Model selection uses the validation set only; the test set is never looked at
+        # until training is over, so the final scores are not tuned to it.
         val_m = evaluate(y_val, predict(model, val_loader, device, use_amp))
         print(f"epoch {epoch} | loss {running / len(train_loader.dataset):.4f} | "
               f"val acc {val_m['accuracy']:.4f} macro-F1 {val_m['macro_f1']:.4f}")
+        # Macro-F1 (not accuracy) is the selection metric since it counts every class equally.
+        # Only the best epoch's weights are kept on disk; patience counts epochs without gain.
         if val_m["macro_f1"] > best_f1:
             best_f1, best_epoch, bad = val_m["macro_f1"], epoch, 0
             torch.save({"state_dict": model.state_dict(), "args": vars(args)}, ckpt_path)
@@ -193,16 +214,21 @@ def main():
             if bad >= args.patience:
                 print(f"Early stopping (best epoch {best_epoch})")
                 break
-    _sync(device)
+    _sync(device)   # make sure all GPU work is done before stopping the training clock
     train_minutes = (time.time() - t_start) / 60
     train_mem_mb = torch.cuda.max_memory_allocated() / 2**20 if device.type == "cuda" else 0.0
 
     # ---------- final evaluation with the best epoch ----------
+    # Reload the best-epoch weights (the model in memory is from the last epoch run).
     model.load_state_dict(torch.load(ckpt_path, map_location=device)["state_dict"])
+    # Full test set (1,283 rows) is scored in batches for a more stable accuracy estimate.
     full_m = evaluate(y_test, predict(model, test_loader, device, use_amp))
 
+    # The shared ~300-row subset is what every model (incl. the LLMs) is compared on, and the
+    # only part timed at batch size 1.
     idx = shared_test_indices(test)
     sub_texts, sub_y = [texts["test"][i] for i in idx], [y_test[i] for i in idx]
+    # Reset again so inference memory is measured separately from training memory.
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats()
     sub_pred, lat = predict_with_latency(model, sub_texts, tokenizer, max_len, device, use_amp)
@@ -210,6 +236,7 @@ def main():
     sub_m = evaluate(sub_y, sub_pred)
 
     avg_lat = float(np.mean(lat))
+    # ms -> hours per statement, x1000 statements, x hourly price, x overhead.
     cost_per_1k = avg_lat / 1000 / 3600 * 1000 * T4_PRICE_PER_HOUR * OVERHEAD
 
     results = build_results_dict(
@@ -227,13 +254,17 @@ def main():
     # Extra fields requested in the project brief (additive, schema stays compatible):
     results["inference_sec_per_1000"] = round(avg_lat, 3)   # ms/statement == seconds per 1,000
     results["infer_seconds_per_1000"] = round(avg_lat, 3)   # same key the LLM results / cost_analysis use
+    # Peak memory is the headline GPU figure; llm/cost_analysis reads gpu_peak_mem_mb, and
+    # falls back to gpu_mem_inference_mb if it is absent.
     results["gpu_peak_mem_mb"] = round(max(train_mem_mb, infer_mem_mb), 1)
     results["gpu_mem_train_mb"] = round(train_mem_mb, 1)
     results["gpu_mem_inference_mb"] = round(infer_mem_mb, 1)
+    # Headline metrics above are on the 300-row subset; full_test gives the same scores on
+    # all test rows (with the confusion matrix) as a lower-variance cross-check.
     results["full_test"] = {"accuracy": full_m["accuracy"], "macro_f1": full_m["macro_f1"],
                             "n": len(y_test), "confusion_matrix": full_m["confusion_matrix"]}
-    results["val_best_macro_f1"] = best_f1
-    results["hyperparams"] = vars(args)
+    results["val_best_macro_f1"] = best_f1       # validation score of the checkpoint that was kept
+    results["hyperparams"] = vars(args)          # lets anyone reproduce this exact run
 
     save_results_json(results, run_name, RESULTS_DIR)
     save_predictions_csv(idx, sub_y, sub_pred, lat, run_name, RESULTS_DIR)

@@ -153,11 +153,14 @@ class TestMetadataRealSchema:
     }
 
     def test_history_uses_real_count_columns(self):
+        """History must come from the 5 *_counts columns (order: barely, false, half, mostly,
+        pants-on-fire), not fall back to zeros."""
         text = build_metadata_text(self.REAL_ROW)
         assert "history: 3,1,4,2,7" in text
         assert "history: 0,0,0,0,0" not in text
 
     def test_none_and_blank_fields_do_not_crash(self):
+        """None or whitespace-only speaker/party/subject become 'UNKNOWN' instead of raising."""
         row = dict(self.REAL_ROW, speaker=None, party_affiliation="  ", subject=None)
         text = build_metadata_text(row)
         assert "speaker: UNKNOWN" in text
@@ -165,10 +168,12 @@ class TestMetadataRealSchema:
         assert "subject: UNKNOWN" in text
 
     def test_none_counts_become_zero(self):
+        """A missing count is treated as 0 and must not shift the other positions."""
         row = dict(self.REAL_ROW, false_counts=None)
         assert "history: 3,0,4,2,7" in build_metadata_text(row)
 
     def test_legacy_credit_history_list_still_supported(self):
+        """The older pre-combined `credit_history` list still works, zero-padded to 5 values."""
         row = {"statement": "x", "credit_history": [1, 2]}
         assert "history: 1,2,0,0,0" in build_metadata_text(row)
 
@@ -178,10 +183,12 @@ class TestTestSubset:
 
     @staticmethod
     def _fake_dataset(counts):
+        """Dict stand-in for a dataset with counts[i] rows of class i (only "label" is read)."""
         labels = [i for i, n in enumerate(counts) for _ in range(n)]
         return {"label": labels}
 
     def test_exact_size_unique_and_sorted(self):
+        """Rounding per class must not change the total: exactly 300, no duplicates, sorted."""
         ds = self._fake_dataset([92, 250, 214, 267, 249, 211])
         idx = get_test_indices(ds, subset_size=300)
         assert len(idx) == 300
@@ -189,6 +196,7 @@ class TestTestSubset:
         assert idx == sorted(idx)
 
     def test_is_proportional_to_label_distribution(self):
+        """Each class's share of the subset is within 1 of its exact proportional share."""
         counts = [92, 250, 214, 267, 249, 211]
         ds = self._fake_dataset(counts)
         idx = get_test_indices(ds, subset_size=300)
@@ -198,6 +206,8 @@ class TestTestSubset:
             assert abs(got - n * 300 / total) <= 1
 
     def test_deterministic_and_does_not_touch_global_rng(self):
+        """Same call gives the same subset (so all models share it) without reseeding or
+        consuming numpy's global random state."""
         import numpy as np
         ds = self._fake_dataset([50, 50, 50, 50, 50, 50])
         np.random.seed(123)
@@ -207,16 +217,18 @@ class TestTestSubset:
         assert a == get_test_indices(ds, subset_size=60)
 
     def test_subset_larger_than_dataset_returns_all(self):
+        """Requesting more rows than exist returns every index instead of failing."""
         ds = self._fake_dataset([2, 2, 2, 2, 2, 2])
         assert get_test_indices(ds, subset_size=100) == list(range(12))
 
     def test_invalid_subset_size(self):
+        """A non-positive subset_size is rejected with ValueError."""
         with pytest.raises(ValueError):
             get_test_indices(self._fake_dataset([1, 1, 1, 1, 1, 1]), subset_size=0)
 
 
 class TestDataLoading:
-    """Test LIAR dataset loading (integration tests)."""
+    """Test LIAR dataset loading (integration tests; need network or LIAR_TSV_DIR)."""
 
     def test_load_liar(self):
         """Test loading LIAR dataset."""
@@ -260,6 +272,7 @@ class TestEvaluation:
 
         metrics = evaluate(y_true, y_pred)
 
+        # Upper bound: a perfect classifier must score exactly 1.0 on both headline metrics.
         assert metrics["accuracy"] == 1.0
         assert metrics["macro_f1"] == 1.0
         assert metrics["n_samples"] == 6

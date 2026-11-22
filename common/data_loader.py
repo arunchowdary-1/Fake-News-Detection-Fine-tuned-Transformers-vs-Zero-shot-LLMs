@@ -5,7 +5,7 @@ Data loader for the LIAR dataset with metadata handling and test subset generati
 import os
 from typing import Tuple, List, Dict, Optional
 import numpy as np
-from datasets import load_dataset, Dataset
+from datasets import ClassLabel, Dataset, Features, Value, load_dataset
 from common.config import LABEL_TO_IDX, TEST_SUBSET_SIZE, RANDOM_SEED, DATA_DIR
 
 # Class order of the Hugging Face "liar" ClassLabel feature (differs from LABEL_TO_IDX)
@@ -14,8 +14,10 @@ HF_LIAR_LABEL_NAMES = ["false", "half-true", "mostly-true", "true", "barely-true
 
 def _label_name(label) -> Optional[str]:
     """Normalize a label (string or Hugging Face integer id) to a lowercase label name."""
+    # bool is a subclass of int, so reject it first; True/False would otherwise pass as ids 1/0.
     if isinstance(label, bool):
         return None
+    # Integer ids are interpreted in HF order, not project order (see HF_LIAR_LABEL_NAMES).
     if isinstance(label, (int, np.integer)):
         if 0 <= label < len(HF_LIAR_LABEL_NAMES):
             return HF_LIAR_LABEL_NAMES[label]
@@ -25,6 +27,59 @@ def _label_name(label) -> Optional[str]:
     return None
 
 
+# Column order of the original LIAR TSV files (no header row), named like the HF dataset.
+LIAR_TSV_COLUMNS = [
+    "id", "label", "statement", "subject", "speaker", "job_title", "state_info",
+    "party_affiliation", "barely_true_counts", "false_counts", "half_true_counts",
+    "mostly_true_counts", "pants_on_fire_counts", "context",
+]
+_LIAR_COUNT_COLUMNS = [c for c in LIAR_TSV_COLUMNS if c.endswith("_counts")]
+
+
+def read_liar_tsv(path: str) -> Dict[str, list]:
+    """Read one original LIAR TSV file into {column: values} (HF column names).
+
+    Labels stay strings ("pants-fire", ...), which label_to_idx() accepts. Short rows
+    are padded with empty strings; count columns become ints (blank -> 0).
+    """
+    cols: Dict[str, list] = {c: [] for c in LIAR_TSV_COLUMNS}
+    with open(path, encoding="utf-8", newline="") as f:
+        for line in f:
+            line = line.rstrip("\r\n")
+            if not line:
+                continue
+            parts = line.split("\t")
+            # Pad short rows (trailing empty fields can be missing) and drop any extra fields.
+            parts = (parts + [""] * len(LIAR_TSV_COLUMNS))[: len(LIAR_TSV_COLUMNS)]
+            for name, value in zip(LIAR_TSV_COLUMNS, parts):
+                if name in _LIAR_COUNT_COLUMNS:
+                    # int(float(..)) tolerates values written like "3.0"
+                    value = int(float(value)) if value.strip() else 0
+                cols[name].append(value)
+    return cols
+
+
+def load_liar_from_dir(directory: str) -> Tuple[Dataset, Dataset, Dataset]:
+    """Load LIAR from train.tsv / valid.tsv / test.tsv in `directory` (same row order as HF).
+
+    Returns the same shape as the Hugging Face copy: integer labels in a ClassLabel feature
+    (HF_LIAR_LABEL_NAMES order), so code that reads `features["label"].names` keeps working.
+    """
+    # Explicit schema so the label is a ClassLabel and counts are int64, matching the HF copy.
+    features = Features({
+        c: (ClassLabel(names=HF_LIAR_LABEL_NAMES) if c == "label"
+            else Value("int64") if c in _LIAR_COUNT_COLUMNS else Value("string"))
+        for c in LIAR_TSV_COLUMNS
+    })
+    splits = []
+    for name in ("train", "valid", "test"):
+        cols = read_liar_tsv(os.path.join(directory, f"{name}.tsv"))
+        # TSV labels are strings; convert to HF ClassLabel ids. Raises ValueError on unknown names.
+        cols["label"] = [HF_LIAR_LABEL_NAMES.index(str(l).strip().lower()) for l in cols["label"]]
+        splits.append(Dataset.from_dict(cols, features=features))
+    return tuple(splits)
+
+
 def load_liar() -> Tuple[Dataset, Dataset, Dataset]:
     """
     Load the LIAR dataset from Hugging Face.
@@ -32,9 +87,31 @@ def load_liar() -> Tuple[Dataset, Dataset, Dataset]:
     Returns:
         (train_dataset, val_dataset, test_dataset)
     """
+    # Offline route: set LIAR_TSV_DIR to a folder with the original train/valid/test.tsv
+    # (used on Kaggle, where the dataset's download host returns 403).
+    tsv_dir = os.environ.get("LIAR_TSV_DIR")
+    if tsv_dir:
+        print(f"Loading LIAR from TSV files in {tsv_dir}")
+        return load_liar_from_dir(tsv_dir)
     try:
         print("Loading LIAR dataset from Hugging Face...")
-        ds = load_dataset("liar")
+        # Newer datasets/huggingface_hub need the full repo id and trust_remote_code
+        # (liar is a script dataset); the pinned older versions accept the plain call.
+        # datasets >= 4 removed script datasets entirely, so pin datasets<4 there.
+        attempts = [
+            lambda: load_dataset("liar"),
+            lambda: load_dataset("liar", trust_remote_code=True),
+            lambda: load_dataset("ucsbai/liar", trust_remote_code=True),
+        ]
+        last_err = None
+        for attempt in attempts:
+            try:
+                ds = attempt()
+                break
+            except Exception as err:
+                last_err = err
+        else:
+            raise last_err
         return ds["train"], ds["validation"], ds["test"]
     except Exception as e:
         raise RuntimeError(f"Failed to load LIAR dataset: {e}")
@@ -51,8 +128,10 @@ def validate_statement(statement: str, max_length: int = 1000) -> bool:
     Returns:
         True if valid, False otherwise
     """
+    # Non-strings (None, numbers) are rejected rather than coerced.
     if not isinstance(statement, str):
         return False
+    # Whitespace-only counts as empty; the length cap uses the raw (unstripped) text.
     if len(statement.strip()) == 0 or len(statement) > max_length:
         return False
     return True
@@ -114,6 +193,8 @@ def _credit_history(row: Dict) -> List[int]:
     pants-on-fire) from a LIAR row. Supports the real dataset columns, and a
     pre-combined `credit_history` list as a fallback. Missing values become 0.
     """
+    # The real HF rows use five separate *_counts columns; reading a single "credit_history"
+    # field there silently yielded all zeros, so the real columns take priority.
     if any(col in row for col in CREDIT_HISTORY_COLUMNS):
         raw = [row.get(col) for col in CREDIT_HISTORY_COLUMNS]
     else:
@@ -141,7 +222,8 @@ def build_metadata_text(row: Dict) -> str:
 
     statement = (row.get("statement") or "").strip()
 
-    # Combine metadata with statement
+    # Combine metadata with statement. The literal " [SEP] " is swapped for the tokenizer's own
+    # separator token in finetune/bert_model.build_texts.
     metadata_prefix = f"speaker: {speaker} | party: {party} | subject: {subject} | history: {history_str}"
     return f"{metadata_prefix} [SEP] {statement}"
 
@@ -163,6 +245,7 @@ def get_test_indices(test_dataset: Dataset, subset_size: int = TEST_SUBSET_SIZE)
 
     labels = np.array([label_to_idx(label) for label in test_dataset["label"]])
     total = len(labels)
+    # Asking for at least the whole set just returns everything (nothing to sample).
     if subset_size >= total:
         return list(range(total))
 
@@ -174,6 +257,8 @@ def get_test_indices(test_dataset: Dataset, subset_size: int = TEST_SUBSET_SIZE)
     exact = np.array([len(m) * subset_size / total for m in class_members])
     alloc = np.floor(exact).astype(int)
     leftover = subset_size - int(alloc.sum())
+    # Flooring loses < 1 per class; hand the missing seats to the classes with the biggest
+    # fractional remainders so the total is exactly subset_size (stable sort = deterministic ties).
     for c in np.argsort(-(exact - alloc), kind="stable")[:leftover]:
         alloc[c] += 1
 
@@ -181,7 +266,7 @@ def get_test_indices(test_dataset: Dataset, subset_size: int = TEST_SUBSET_SIZE)
     for members, n in zip(class_members, alloc):
         if n > 0:
             indices.extend(rng.choice(members, size=int(n), replace=False).tolist())
-    indices = sorted(indices)
+    indices = sorted(indices)  # sorted so the saved file and Dataset.select order are stable
 
     print(f"Generated stratified test subset: {len(indices)} samples out of {total}")
     print("Class distribution in subset (subset/full):")
