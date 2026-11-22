@@ -2,7 +2,7 @@
 
 ### Evidence from political statements in the LIAR dataset
 
-**PRACHI DHAKAD, SANDHYA KAUSHAL, SHILPI SHAW and ARUN**
+**PRACHI DHAKAD, SANDHYA KAUSHAL, SHILPI SHAW and ARUN KUMAR NALLAMOTHU**
 
 B.Tech Computer Science, Sitare University, Lucknow, Uttar Pradesh, India
 
