@@ -99,7 +99,5 @@ scratch/
 # OS
 Thumbs.db
 
-# Allow the BERT Colab runner notebook
-!notebooks/run_bert_colab.ipynb
 # Allow the LLM Colab runner notebook (outputs cleared)
 !notebooks/run_llm_colab.ipynb
