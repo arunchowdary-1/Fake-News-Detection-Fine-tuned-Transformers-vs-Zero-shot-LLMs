@@ -34,6 +34,10 @@ import torch
 import torch.nn as nn
 
 # Special token #1: used to fill empty space so all sentences in a batch have equal length.
+# VIVA Q: <pad> aur <unk> kya hain, aur inki zaroorat kyun padi?
+#     A: <pad> (id 0) chhote sentences ko lamba karne wala bharti ka token hai, taaki ek batch rectangle
+#        ban sake. <unk> (id 1) un words ke liye hai jo training vocabulary me nahi the; iske bina test
+#        me naya word aate hi lookup crash ho jaata.
 PAD_TOKEN = "<pad>"
 # Special token #2: stands in for any word that is NOT in our vocabulary.
 # Without it, a new word at test time would crash the lookup.
@@ -46,10 +50,17 @@ UNK_TOKEN = "<unk>"
 #                             political claims are full of money and percentages
 #                             ("spent $3 trillion", "cut taxes by 50%").
 # We compile it once here (not inside the function) so it isn't rebuilt for every sentence.
+# VIVA Q: Tokenizer simple regex kyun, aur $ aur % ko kyun rakha?
+#     A: Baseline ko simple aur tez rakhna tha (BERT apna tokenizer khud use karta hai). Political claims
+#        me '$3 trillion' ya '50%' jaise numbers aur symbols important signal hote hain, isliye unhe alag
+#        tokens rakha.
 _TOKEN_RE = re.compile(r"[a-z0-9]+(?:'[a-z]+)?|[$%]")
 
 
-def tokenize(text: str) -> List[str]:
+# VIVA Q: Text ko lowercase kyun karte hain?
+#     A: Taaki 'Tax' aur 'tax' ek hi word maane jayein; vocabulary chhoti rehti hai aur model ko kam data
+#        me zyada seekhne ko milta hai. Nuksan: 'US' aur 'us' mil jaate hain.
+def tokenize(text: str) -> List[str]:  # sentence (text) -> lowercase words ki list; ye pehla step hai text ko numbers me badalne ka
     """
     Split one statement into a list of lowercase word tokens.
 
@@ -61,12 +72,16 @@ def tokenize(text: str) -> List[str]:
     # Defensive check: if the dataset ever contains None/NaN instead of a string,
     # return an empty list instead of crashing the whole training run.
     if not isinstance(text, str):
-        return []
+        return []  # text string nahi hai (None/number) toh khaali list, taaki training crash na kare
     # Lowercase first so "Tax" and "tax" become the same word, then find all matches.
     return _TOKEN_RE.findall(text.lower())
 
 
-class Vocab:
+# VIVA Q: Vocabulary sirf training data se kyun banti hai, test se kyun nahi?
+#     A: Agar test ke words bhi dekh lein toh test ki jaankari training me leak ho jaati hai (data
+#        leakage) aur score jhootha achha dikhta hai. Isliye test ke naye words <unk> ban jaate hain,
+#        jaisa asli duniya me hota.
+class Vocab:  # Vocab = word <-> number ki dictionary; embedding layer ko number chahiye, word nahi
     """
     Dictionary that maps every known word to an integer id.
 
@@ -77,15 +92,19 @@ class Vocab:
     training and our accuracy would look better than it really is.
     """
 
-    def __init__(self, stoi: Dict[str, int]):
+    def __init__(self, stoi: Dict[str, int]):  # ready-made dictionary (stoi) se Vocab object banata hai
         # "stoi" = "string to index": the word -> id dictionary.
         self.stoi = stoi
         # Remember the ids of the two special tokens, since the model needs them.
         self.pad_idx = stoi[PAD_TOKEN]
-        self.unk_idx = stoi[UNK_TOKEN]
+        self.unk_idx = stoi[UNK_TOKEN]  # <unk> ka number yaad rakho, unknown words ko yahi milega
 
-    @classmethod
-    def build(cls, texts: Iterable[str], min_freq: int = 2, max_size: int = 20000) -> "Vocab":
+    # VIVA Q: min_freq=2 aur max_size=20000 kyun?
+    #     A: Ek hi baar dikhne wale words zyadatar typos ya naam hote hain; unse kuch seekha nahi ja
+    #        sakta aur embedding table bekaar bada ho jaata. Asli run me 10,269 training statements se
+    #        vocabulary 6,944 words ki bani, yaani 20,000 ki limit tak pahunchi hi nahi.
+    @classmethod  # classmethod: Vocab.build(...) seedha class se chalta hai, pehle object banane ki zaroorat nahi
+    def build(cls, texts: Iterable[str], min_freq: int = 2, max_size: int = 20000) -> "Vocab":  # training sentences se vocabulary banata hai (min_freq=2: kam se kam 2 baar dikhe, max_size=20000)
         """
         Build the vocabulary from a list of training sentences.
 
@@ -103,15 +122,15 @@ class Vocab:
         stoi = {PAD_TOKEN: 0, UNK_TOKEN: 1}
         # Give every kept word the next free id (2, 3, 4, ...).
         for w in words:
-            stoi[w] = len(stoi)
+            stoi[w] = len(stoi)  # agla khaali number (2, 3, 4, ...) is word ko de do
         # `cls(...)` creates a Vocab object from the finished dictionary.
         return cls(stoi)
 
-    def __len__(self) -> int:
+    def __len__(self) -> int:  # len(vocab) likhne par vocabulary ka size mile (embedding table ka size isi se tay hota hai)
         # Lets us write len(vocab) to get the vocabulary size (needed for the embedding table).
         return len(self.stoi)
 
-    def encode(self, text: str, max_len: int) -> List[int]:
+    def encode(self, text: str, max_len: int) -> List[int]:  # ek sentence -> numbers ki list, max_len se zyada lamba ho toh kaat do
         """
         Convert one sentence into a list of integer ids, cut to max_len words.
 
@@ -126,7 +145,11 @@ class Vocab:
         return ids or [self.unk_idx]
 
 
-def pad_batch(seqs: List[List[int]], pad_idx: int):
+# VIVA Q: Padding aur packing kyun karte hain?
+#     A: CPU/GPU ek rectangle matrix par kaam karte hain, isliye chhote sentences ko <pad> se bharte
+#        hain. Par LSTM ko <pad> 'padhna' nahi chahiye, isliye asli lambai (lengths) bhi saath bhejte
+#        hain aur forward() me pack_padded_sequence se pad skip karwate hain.
+def pad_batch(seqs: List[List[int]], pad_idx: int):  # alag-alag lambai ke sentences ko ek rectangle (tensor) banata hai, chhote ko <pad> se bharke
     """
     Turn a list of id-lists with DIFFERENT lengths into ONE rectangular tensor.
 
@@ -143,11 +166,19 @@ def pad_batch(seqs: List[List[int]], pad_idx: int):
     out = torch.full((len(seqs), int(lengths.max())), pad_idx, dtype=torch.long)
     # Overwrite the left part of each row with that sentence's real ids.
     for i, s in enumerate(seqs):
-        out[i, : len(s)] = torch.tensor(s, dtype=torch.long)
-    return out, lengths
+        out[i, : len(s)] = torch.tensor(s, dtype=torch.long)  # i-th sentence ke asli numbers bayen hisse me daalo, baaki jagah <pad> hi rehti hai
+    return out, lengths  # (padded matrix, har sentence ki asli lambai) dono wapas; lambai LSTM ko pad ignore karne ke liye chahiye
 
 
-class BiLSTMClassifier(nn.Module):
+# VIVA Q: Baseline me LSTM hi kyun?
+#     A: Ye bina pre-training ka chhota model hai (CPU par ~4 minute, sirf 0.93M params). BERT, RoBERTa
+#        aur LLM ko isse compare karke pata chalta hai ki pre-trained knowledge se kitna fayda hua; agar
+#        wo isse ZYADA behtar nahi hote toh unka kharch jaayaz nahi.
+# VIVA Q: LSTM simple RNN se behtar kyun hai?
+#     A: LSTM me gates (input, forget, output) aur cell memory hoti hai, jo lambe sentence me purani baat
+#        yaad rakhne deti hai aur vanishing gradient ki dikkat kam karti hai. Simple RNN kuch words baad
+#        hi pichla context bhool jaata hai.
+class BiLSTMClassifier(nn.Module):  # poora neural network: Embedding -> BiLSTM -> Linear(6 classes)
     """
     The neural network: Embedding -> Bidirectional LSTM -> Linear (6 classes).
 
@@ -158,8 +189,8 @@ class BiLSTMClassifier(nn.Module):
     mostly-true, true (the fixed label order in common/config.py).
     """
 
-    def __init__(
-        self,
+    def __init__(  # network ki layers yahan banti hain (sirf ek baar, model banate waqt)
+        self,  # network object khud
         vocab_size: int,           # how many different words the embedding table must hold
         num_classes: int = 6,      # LIAR has 6 truthfulness labels
         embed_dim: int = 100,      # size of the vector that represents each word
@@ -167,7 +198,7 @@ class BiLSTMClassifier(nn.Module):
         num_layers: int = 1,       # stacked LSTM layers (1 keeps the baseline small)
         dropout: float = 0.5,      # fraction of values randomly switched off during training
         pad_idx: int = 0,          # id of <pad>, so its embedding stays all zeros
-    ):
+    ):  # yahan tak constructor ke parameters ki list khatam
         # Required: initialises the parent nn.Module so PyTorch tracks our layers/weights.
         super().__init__()
 
@@ -175,14 +206,25 @@ class BiLSTMClassifier(nn.Module):
         # "Trainable embeddings" is exactly what issue #4 asks for: the word
         # vectors start random and are learned during training (no GloVe etc.).
         # padding_idx keeps the <pad> vector at zero and never updates it.
+        # VIVA Q: Embedding kya hai, aur 'trainable' ka matlab?
+        #     A: Har word ko 100 numbers ka vector milta hai. Vectors random shuru hote hain aur training
+        #        me seekhe jaate hain (GloVe jaisa pre-trained nahi liya). Embedding table = 6,944 words
+        #        x 100 = 694,400 params, jo total 932,998 ka lagbhag 74% hai.
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=pad_idx)
 
         # THE LSTM: a recurrent layer that reads the sentence word by word and
         # keeps a memory of what it has seen (so word ORDER matters).
+        # VIVA Q: Bidirectional ka kya fayda hai?
+        #     A: Ek LSTM sentence left se right padhta hai aur doosra right se left, toh har word ko aage
+        #        aur peeche dono taraf ka context milta hai. Iska kharch: LSTM ke params 2 guna ho jaate
+        #        hain (235,520).
+        # VIVA Q: num_layers=1 kyun?
+        #     A: Baseline chhota rakhna tha, aur data sirf ~10k sentences ka hai; zyada layers overfit
+        #        karte.
         self.lstm = nn.LSTM(
             embed_dim,                 # input size per time-step = one word vector
             hidden_dim,                # size of the memory
-            num_layers=num_layers,
+            num_layers=num_layers,  # LSTM layers ki sankhya (1 = chhota baseline)
             batch_first=True,          # tensors are shaped [batch, time, features]
             bidirectional=True,        # "Bi": also read right->left, so every word
                                        # gets context from both before and after it
@@ -193,15 +235,24 @@ class BiLSTMClassifier(nn.Module):
 
         # DROPOUT: randomly zeroes values while training. It fights overfitting,
         # which is a real danger here: LIAR is only ~10k sentences.
+        # VIVA Q: Dropout kya hai, aur 0.5 kyun?
+        #     A: Training me random 50% values band kar dete hain, toh model ek-do neurons par nirbhar
+        #        nahi rehta. Isse overfitting kam hoti hai, jo 10k sentences me badi dikkat hai.
+        #        Evaluation (model.eval()) me dropout band rehta hai, isliye predictions ek jaise aate
+        #        hain.
         self.dropout = nn.Dropout(dropout)
 
         # OUTPUT LAYER: maps the sentence summary to one score per class.
         # Input size is hidden_dim * 4 because we concatenate TWO things, each
         # of which is 2 directions * hidden_dim wide:
         #     (final forward+backward state)  +  (max-pooled states)
+        # VIVA Q: Linear layer ka input hidden_dim*4 = 512 kyun?
+        #     A: Do cheezein jodte hain: aakhri forward+backward state (2 x 128 = 256) aur max-pooled
+        #        features (2 x 128 = 256), yaani 512. Output 6 = classes (pants-fire se true). Params =
+        #        512 x 6 + 6 = 3,078.
         self.fc = nn.Linear(hidden_dim * 4, num_classes)
 
-    def forward(self, ids: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
+    def forward(self, ids: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:  # ek batch ko network se guzaarta hai aur har class ka score (logit) wapas deta hai
         """
         Run a batch of padded sentences through the network.
         Returns raw class scores ("logits") of shape [batch, num_classes].
@@ -212,8 +263,11 @@ class BiLSTMClassifier(nn.Module):
         # 2) "Pack" the batch so the LSTM skips the <pad> positions entirely.
         #    lengths must live on the CPU for this PyTorch function.
         #    enforce_sorted=False lets us pass sentences in any length order.
+        # VIVA Q: pack_padded_sequence ka kaam kya hai?
+        #     A: LSTM ko batch ke <pad> wale bekaar steps skip karwana; warna model un khaali steps se
+        #        confuse hota aur chhote sentences ka summary kharab hota.
         packed = nn.utils.rnn.pack_padded_sequence(
-            emb, lengths.cpu(), batch_first=True, enforce_sorted=False
+            emb, lengths.cpu(), batch_first=True, enforce_sorted=False  # emb = word vectors; lengths CPU par chahiye; enforce_sorted=False = sentences ko lambai ke order me rakhna zaroori nahi
         )
 
         # 3) Run the LSTM. `out` = output at every word position,
@@ -227,6 +281,10 @@ class BiLSTMClassifier(nn.Module):
 
         # 5) Sentence summary #1: the last forward state (h[-2]) glued to the last
         #    backward state (h[-1]). It "remembers" the whole sentence.
+        # VIVA Q: Aakhri state aur max-pool, dono kyun?
+        #     A: Aakhri state poore sentence ka summary deti hai; max-pool har feature ka sabse tez
+        #        signal pakadta hai chahe wo word kahin bhi ho. Dono jodne se chhote aur lambe dono
+        #        sentences par model behtar chalta hai.
         last = torch.cat([h[-2], h[-1]], dim=1)
 
         # 6) Sentence summary #2: for each feature, the strongest value over all
@@ -235,10 +293,18 @@ class BiLSTMClassifier(nn.Module):
         pooled = out.max(dim=1).values
 
         # 7) Join both summaries, apply dropout, and produce the 6 class scores.
+        # VIVA Q: Softmax kyun nahi lagaya?
+        #     A: Hum raw scores (logits) wapas dete hain. CrossEntropyLoss andar softmax khud lagata hai,
+        #        aur prediction ke liye argmax kaafi hai, toh alag softmax ki zaroorat nahi.
         return self.fc(self.dropout(torch.cat([last, pooled], dim=1)))
 
 
-def count_params(model: nn.Module) -> int:
+# VIVA Q: 932,998 parameters kahan se aaye?
+#     A: Embedding 694,400 + LSTM 235,520 + Linear 3,078 = 932,998.
+# VIVA Q: Parameter count itna kyun important hai?
+#     A: Issue #11 ka sawal hai size vs accuracy vs cost. LSTM ~1M, BERT 109M, RoBERTa 125M, Qwen 7.6B
+#        params; jitna bada model, utna zyada memory aur kharch.
+def count_params(model: nn.Module) -> int:  # trainable weights ginta hai (results JSON me 'params' ke liye, 932,998)
     """
     Count the trainable weights of the model.
 

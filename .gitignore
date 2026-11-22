@@ -78,6 +78,8 @@ ENV/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+# Keep the Colab notebooks that document how the GPU runs were done
+!colab/*.ipynb
 
 # Logs
 *.log
