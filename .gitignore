@@ -78,8 +78,8 @@ ENV/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
-# Keep the Colab notebooks that document how the GPU runs were done
-!colab/*.ipynb
+# Allow the RoBERTa Colab notebook (kept with the outputs of the real T4 run)
+!notebooks/run_roberta_colab.ipynb
 
 # Logs
 *.log
