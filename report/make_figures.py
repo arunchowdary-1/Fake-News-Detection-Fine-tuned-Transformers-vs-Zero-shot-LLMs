@@ -191,7 +191,7 @@ def fig_confusion():
     pair = [("roberta_text", "RoBERTa, text only"), ("roberta_meta", "RoBERTa + speaker info")]
     mats = [confusion(k) for k, _ in pair]
     vmax = max(m.max() for m in mats)
-    fig, axes = plt.subplots(1, 2, figsize=(11.2, 5.2))
+    fig, axes = plt.subplots(1, 2, figsize=(10.4, 3.9))
     for ax, (key, title), m in zip(axes, pair, mats):
         ax.imshow(m, cmap=cmap, vmin=0, vmax=vmax)
         for i in range(6):
@@ -264,7 +264,7 @@ def fig_llm_bias():
         ("Zero-shot LLM answers", zs, AQUA),
         ("Few-shot LLM answers", fs, AQUA),
     ]
-    fig, axes = plt.subplots(1, 3, figsize=(11.4, 4.0), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(10.4, 2.8), sharey=True)
     for ax, (title, cnt, color) in zip(axes, panels):
         vals = [cnt.get(i, 0) for i in range(6)]
         ax.bar(range(6), vals, width=0.68, color=color, edgecolor="white", linewidth=1.2)
@@ -278,8 +278,6 @@ def fig_llm_bias():
         ax.tick_params(axis="x", length=0)
     axes[0].set_ylabel("Number of the 300 statements")
     axes[0].set_ylim(0, 165)
-    fig.suptitle("The LLM leans on one or two ratings instead of using all six", x=0.01, ha="left",
-                 fontsize=12.5, fontweight="bold", y=1.02)
     fig.tight_layout()
     fig.savefig(os.path.join(OUT, "fig_llm_bias.png"))
     plt.close(fig)
@@ -309,7 +307,134 @@ def fig_label_distribution():
     plt.close(fig)
 
 
+# ------------------------------------------------- compact multi-panel figures
+# Used by the short, journal-style report: the same charts and the same data as above,
+# placed side by side so the report needs fewer pages.
+def fig_main_results_panel():
+    six = {k: load_json(k)["accuracy"] for k in MODELS}
+    two = {k: two_way_accuracy(k) for k in MODELS}
+    base2 = sum(1 for t, _ in load_preds("bert_text") if t in FALSEISH) / 300
+    order = [k for k, _ in sorted(six.items(), key=lambda kv: kv[1])]  # same order in both panels
+    fig, (a, b) = plt.subplots(1, 2, figsize=(10.4, 3.3), gridspec_kw={"width_ratios": [1, 1]})
+    for ax, vals, refs, xmax, names in (
+        (a, six, [(SUBSET_RANDOM, ":"), (SUBSET_MAJORITY, "--")], 62, True),
+        (b, {k: two[k] for k in order}, [(max(base2, 1 - base2), "--")], 92, False),
+    ):
+        # draw in the six-way order for both panels so rows line up
+        for i, key in enumerate(order):
+            v = vals[key]
+            fam = MODELS[key][1]
+            ax.barh(i, v * 100, height=0.62, color=FAMILY_COLOR[fam], edgecolor="white", linewidth=1.0)
+            ax.text(v * 100 + 0.8, i, f"{v * 100:.1f}", va="center", ha="left", fontsize=8.5, color=INK,
+                    bbox=dict(facecolor="white", edgecolor="none", pad=0.8), zorder=5)
+        ax.set_yticks(range(len(order)))
+        ax.set_yticklabels([MODELS[k][0] for k in order] if names else [], fontsize=9)
+        ax.set_xlim(0, xmax)
+        ax.xaxis.grid(True, color=GRID, linewidth=0.7)
+        ax.set_axisbelow(True)
+        ax.tick_params(axis="y", length=0)
+        ax.tick_params(axis="x", labelsize=8.5)
+        ax.set_xlabel("Accuracy (%)", fontsize=9)
+        for val, ls in refs:
+            ax.axvline(val * 100, color=INK2, linestyle=ls, linewidth=1.0, zorder=1)
+    a.set_title("(a) Exact rating, six levels", loc="left", fontsize=10.5, fontweight="bold")
+    b.set_title("(b) Fake vs real (false-ish vs true-ish)", loc="left", fontsize=10.5, fontweight="bold")
+    from matplotlib.lines import Line2D
+    handles = [Patch(facecolor=FAMILY_COLOR[f], label=f) for f in FAMILY_COLOR] + [
+        Line2D([0], [0], color=INK2, linestyle=":", label="random guessing 16.7%"),
+        Line2D([0], [0], color=INK2, linestyle="--", label="always one answer (20.7% / 56.3%)"),
+    ]
+    leg = fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False, fontsize=8.5,
+                     bbox_to_anchor=(0.5, -0.1), columnspacing=1.5)
+    for t in leg.get_texts():
+        t.set_color(INK2)
+    fig.tight_layout()
+    fig.savefig(os.path.join(OUT, "fig_main_results.png"))
+    plt.close(fig)
+
+
+def fig_cost_recall_panel():
+    fig, (a, b) = plt.subplots(1, 2, figsize=(10.4, 3.5), gridspec_kw={"width_ratios": [1.05, 1]})
+    offsets = {
+        "lstm": (8, -4, "left"), "bert_text": (9, 3, "left"), "roberta_text": (-9, -12, "right"),
+        "bert_meta": (-9, -4, "right"), "roberta_meta": (-9, 7, "right"),
+        "llm_zeroshot": (-9, -12, "right"), "llm_fewshot": (-9, 8, "right"),
+    }
+    for key, (name, fam) in MODELS.items():
+        r = load_json(key)
+        x, yv = r["est_cost_per_1k"], r["accuracy"] * 100
+        a.scatter(x, yv, s=70, color=FAMILY_COLOR[fam], edgecolor="white", linewidth=1.5, zorder=3)
+        dx, dy, ha = offsets[key]
+        a.annotate(name, (x, yv), xytext=(dx, dy), textcoords="offset points", ha=ha, fontsize=8.3, color=INK)
+    a.set_xscale("log")
+    a.set_xlabel("Cost per 1,000 statements, US dollars (log scale)", fontsize=9)
+    a.set_ylabel("Accuracy (%)", fontsize=9)
+    a.set_ylim(10, 56)
+    a.yaxis.grid(True, color=GRID, linewidth=0.7)
+    a.set_axisbelow(True)
+    a.tick_params(labelsize=8.5)
+    handles = [Patch(facecolor=FAMILY_COLOR[f], label=f) for f in FAMILY_COLOR]
+    leg = a.legend(handles=handles, loc="upper right", frameon=False, fontsize=8)
+    for t in leg.get_texts():
+        t.set_color(INK2)
+    a.set_title("(a) Cost against accuracy", loc="left", fontsize=10.5, fontweight="bold")
+
+    x = np.arange(6)
+    w = 0.36
+    for k, (key, label, color) in enumerate([("roberta_text", "Text only", BLUE),
+                                              ("roberta_meta", "With speaker info", ORANGE)]):
+        vals = [v * 100 for v in recall_per_class(key)]
+        pos = x + (k - 0.5) * (w + 0.03)
+        b.bar(pos, vals, width=w, color=color, edgecolor="white", linewidth=1.0, label=label)
+        for p, v in zip(pos, vals):
+            b.text(p, v + 1.2, f"{v:.0f}", ha="center", va="bottom", fontsize=8, color=INK)
+    b.set_xticks(x)
+    b.set_xticklabels(LABELS, fontsize=8.3, rotation=25, ha="right")
+    b.set_ylim(0, 80)
+    b.set_ylabel("Statements found (%)", fontsize=9)
+    b.yaxis.grid(True, color=GRID, linewidth=0.7)
+    b.set_axisbelow(True)
+    b.tick_params(axis="x", length=0)
+    b.tick_params(axis="y", labelsize=8.5)
+    leg = b.legend(frameon=False, loc="upper center", ncol=2, fontsize=8.5)
+    for t in leg.get_texts():
+        t.set_color(INK2)
+    b.set_title("(b) Share of each rating found (RoBERTa)", loc="left", fontsize=10.5, fontweight="bold")
+    fig.tight_layout()
+    fig.savefig(os.path.join(OUT, "fig_cost_recall.png"))
+    plt.close(fig)
+
+
+def fig_data_panel():
+    train = {"pants-fire": 842, "false": 1998, "barely-true": 1657,
+             "half-true": 2123, "mostly-true": 1966, "true": 1683}
+    subset = Counter(t for t, _ in load_preds("bert_text"))
+    fig, (a, b) = plt.subplots(1, 2, figsize=(10.4, 2.6), gridspec_kw={"width_ratios": [1, 1]})
+    for ax, vals, title, ymax, fmt in (
+        (a, [train[l] for l in LABELS], "(a) Training set (10,269 statements)", 2500, "{:,}"),
+        (b, [subset.get(i, 0) for i in range(6)], "(b) Shared test subset (300 statements)", 75, "{}"),
+    ):
+        ax.bar(range(6), vals, width=0.66, color=GRAY, edgecolor="white", linewidth=1.0)
+        for i, v in enumerate(vals):
+            ax.text(i, v + ymax * 0.015, fmt.format(v), ha="center", va="bottom", fontsize=8.5, color=INK)
+        ax.set_xticks(range(6))
+        ax.set_xticklabels(LABELS, fontsize=8.3, rotation=20, ha="right")
+        ax.set_ylim(0, ymax)
+        ax.yaxis.grid(True, color=GRID, linewidth=0.7)
+        ax.set_axisbelow(True)
+        ax.tick_params(axis="x", length=0)
+        ax.tick_params(axis="y", labelsize=8.5)
+        ax.set_title(title, loc="left", fontsize=10.5, fontweight="bold")
+    a.set_ylabel("Statements", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(os.path.join(OUT, "fig_data.png"))
+    plt.close(fig)
+
+
 if __name__ == "__main__":
+    fig_main_results_panel()
+    fig_cost_recall_panel()
+    fig_data_panel()
     fig_accuracy_six_way()
     fig_accuracy_two_way()
     fig_cost_accuracy()
