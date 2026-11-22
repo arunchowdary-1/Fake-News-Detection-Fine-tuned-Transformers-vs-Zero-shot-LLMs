@@ -96,3 +96,6 @@ scratch/
 
 # OS
 Thumbs.db
+
+# Allow the LLM Colab runner notebook (outputs cleared)
+!notebooks/run_llm_colab.ipynb
