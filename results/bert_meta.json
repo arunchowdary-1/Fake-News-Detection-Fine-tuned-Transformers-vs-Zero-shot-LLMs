@@ -188,5 +188,7 @@
     "no_class_weights": false,
     "no_fp16": false,
     "max_train": null
-  }
+  },
+  "infer_seconds_per_1000": 13.895,
+  "gpu_peak_mem_mb": 2300.6
 }

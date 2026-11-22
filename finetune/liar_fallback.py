@@ -46,24 +46,36 @@ def parse_tsv(text: str) -> Dict[str, List]:
     return cols
 
 
-def load_liar_from_zip(cache_dir: str = "data/"):
-    """Return (train, val, test) as `datasets.Dataset` objects."""
-    from datasets import ClassLabel, Dataset, Features, Value
+TSV_FILES = ("train.tsv", "valid.tsv", "test.tsv")
+
+
+def _read_tsv_texts(cache_dir: str) -> list:
+    """Return the text of train/valid/test .tsv.
+
+    Prefers the original files committed in the repo (LIAR_TSV_DIR, default `liar_data/`);
+    only downloads the official zip if they are missing.
+    """
+    tsv_dir = os.environ.get("LIAR_TSV_DIR", "liar_data")
+    if all(os.path.exists(os.path.join(tsv_dir, f)) for f in TSV_FILES):
+        print(f"Reading LIAR from {tsv_dir}/")
+        return [open(os.path.join(tsv_dir, f), encoding="utf-8").read() for f in TSV_FILES]
 
     os.makedirs(cache_dir, exist_ok=True)
     zpath = os.path.join(cache_dir, "liar_dataset.zip")
     if not os.path.exists(zpath):
         print(f"Downloading LIAR from {LIAR_ZIP_URL} ...")
         urllib.request.urlretrieve(LIAR_ZIP_URL, zpath)
+    with zipfile.ZipFile(zpath) as z:
+        return [io.TextIOWrapper(io.BytesIO(z.read(f)), encoding="utf-8").read() for f in TSV_FILES]
+
+
+def load_liar_from_zip(cache_dir: str = "data/"):
+    """Return (train, val, test) as `datasets.Dataset` objects."""
+    from datasets import ClassLabel, Dataset, Features, Value
 
     feats = Features({
         c: (ClassLabel(names=HF_LIAR_LABEL_NAMES) if c == "label"
             else Value("float32") if c in COUNT_COLUMNS else Value("string"))
         for c in COLUMNS
     })
-    out = []
-    with zipfile.ZipFile(zpath) as z:
-        for fname in ("train.tsv", "valid.tsv", "test.tsv"):
-            text = io.TextIOWrapper(io.BytesIO(z.read(fname)), encoding="utf-8").read()
-            out.append(Dataset.from_dict(parse_tsv(text), features=feats))
-    return tuple(out)
+    return tuple(Dataset.from_dict(parse_tsv(t), features=feats) for t in _read_tsv_texts(cache_dir))
