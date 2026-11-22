@@ -15,6 +15,7 @@ LABELS = [c for c in range(6) for _ in range(12)]
 
 
 def test_select_examples_one_per_class_deterministic():
+    """Same seed gives the same examples, every class appears once, a new seed changes them."""
     a = select_examples(STMTS, LABELS)
     assert a == select_examples(STMTS, LABELS)
     assert sorted(e["label"] for e in a) == sorted(IDX_TO_LABEL.values())
@@ -22,11 +23,14 @@ def test_select_examples_one_per_class_deterministic():
 
 
 def test_select_examples_order_not_label_sorted():
+    """Guards the shuffle: label-sorted examples would end on "true" and bias the prompt."""
     labels = [e["label"] for e in select_examples(STMTS, LABELS)]
     assert labels != [IDX_TO_LABEL[i] for i in range(6)]
 
 
 def test_build_messages_few_shot_structure():
+    """Few-shot prompt is system + (user, assistant) pairs + final user turn; no examples
+    (None or []) must give exactly the zero-shot prompt."""
     ex = select_examples(STMTS, LABELS)
     m = build_messages("Is this true?", ex)
     assert m[0]["role"] == "system" and len(m) == 1 + 2 * 6 + 1
@@ -36,6 +40,7 @@ def test_build_messages_few_shot_structure():
 
 
 def test_classify_and_run_eval_pass_examples_through():
+    """classify() and run_eval() forward `examples` to the prompt (1 example -> 4 messages)."""
     ex = [{"statement": "s", "label": "true"}]
     seen = []
 
@@ -49,17 +54,20 @@ def test_classify_and_run_eval_pass_examples_through():
 
 
 def test_break_even():
+    """Break-even = train cost / per-prediction saving; None if the LLM is not more expensive."""
     assert break_even_predictions(1.0, 0.001, 0.101) == 10000
     assert break_even_predictions(1.0, 0.2, 0.1) is None
 
 
 def _res(path, name, acc, f1, params, train, ms, cost, **extra):
+    """Write a minimal results/<name>.json with the fields cost_analysis reads."""
     d = dict(model=name, accuracy=acc, macro_f1=f1, params=params, train_minutes=train, gpu="T4",
              avg_latency_ms=ms, est_cost_per_1k=cost, n_eval=300, invalid_outputs=0, **extra)
     (path / f"{name}.json").write_text(json.dumps(d))
 
 
 def test_cost_analysis_end_to_end(tmp_path):
+    """Rows load in RUNS order, the better-F1 LLM is the reference, and outputs get written."""
     _res(tmp_path, "bert_text", 0.25, 0.24, 110_000_000, 3.0, 10, 0.001)
     _res(tmp_path, "llm_zeroshot", 0.20, 0.15, 7_600_000_000, 0, 500, 0.06, gpu_peak_mem_mb=5400)
     _res(tmp_path, "llm_fewshot", 0.22, 0.18, 7_600_000_000, 0, 900, 0.11, gpu_peak_mem_mb=5600)
@@ -73,6 +81,7 @@ def test_cost_analysis_end_to_end(tmp_path):
 
 
 def test_read_liar_tsv_parses_original_format(tmp_path):
+    """The raw LIAR TSV reader maps labels and tolerates short rows (missing columns -> 0)."""
     import pytest
     pytest.importorskip("datasets")  # data_loader imports it
     from common.data_loader import label_to_idx, read_liar_tsv
@@ -87,6 +96,8 @@ def test_read_liar_tsv_parses_original_format(tmp_path):
 
 
 def test_score_does_not_invent_predictions_for_invalid_outputs():
+    """Regression: an invalid output used to be treated as a prediction, which deflated the
+    precision of another class. It must only be a miss for its true class."""
     from llm.evaluate_llm import INVALID_IDX, score
     m = score([0, 0, 1], [0, INVALID_IDX, 1])
     assert abs(m["accuracy"] - 2 / 3) < 1e-9
@@ -100,6 +111,8 @@ def test_score_does_not_invent_predictions_for_invalid_outputs():
 
 
 def test_classify_logs_runtime_errors(capsys):
+    """A crashing generate call is counted, reported on stderr and returned as invalid,
+    so a systematic failure (e.g. OOM) is visible and does not abort the run."""
     from llm import inference
 
     inference.RUNTIME_ERRORS = 0
@@ -113,6 +126,7 @@ def test_classify_logs_runtime_errors(capsys):
 
 
 def test_cost_analysis_zero_cost_does_not_divide_by_zero(tmp_path):
+    """A fine-tuned model whose cost rounds to 0 gives a None ratio ("n/a"), not a crash."""
     _res(tmp_path, "lstm", 0.2, 0.18, 900_000, 3.0, 2, 0.0)
     _res(tmp_path, "llm_zeroshot", 0.2, 0.15, 7_600_000_000, 0, 500, 0.06)
     comps = add_comparisons(load_rows(str(tmp_path)))
@@ -121,6 +135,7 @@ def test_cost_analysis_zero_cost_does_not_divide_by_zero(tmp_path):
 
 
 def test_cost_analysis_accepts_bert_style_field_names(tmp_path):
+    """BERT result files use different names for memory and seconds/1000; both must load."""
     _res(tmp_path, "bert_text", 0.25, 0.24, 110_000_000, 3.0, 10, 0.001,
          gpu_mem_inference_mb=1900, inference_sec_per_1000=14.7)
     r = load_rows(str(tmp_path))[0]
@@ -147,6 +162,7 @@ class _FakeCuda:
 
 
 class _FakeTorch:
+    """Minimal torch stand-in exposing .cuda and .device(), so no GPU or torch is needed."""
     def __init__(self, strict):
         self.cuda = _FakeCuda(strict)
 
@@ -156,6 +172,8 @@ class _FakeTorch:
 
 
 def test_peak_memory_helpers_sum_devices_and_survive_rejected_device_args():
+    """Regression for a Kaggle crash: memory is summed over GPUs, and when torch rejects
+    per-device arguments the helpers fall back to the current device instead of raising."""
     from llm.evaluate_llm import peak_memory_mb, reset_peak_memory
     ok = _FakeTorch(strict=False)
     reset_peak_memory(ok)
@@ -166,6 +184,8 @@ def test_peak_memory_helpers_sum_devices_and_survive_rejected_device_args():
 
 
 def test_load_liar_from_dir_matches_hf_shape(tmp_path):
+    """The TSV-directory loader returns HF-style integer ClassLabel labels, so it is a
+    drop-in replacement for the HF loader in the baseline and fine-tuning code."""
     import pytest
     pytest.importorskip("datasets")
     from common.data_loader import label_to_idx, load_liar_from_dir

@@ -122,7 +122,7 @@
   },
   "mode": "zeroshot",
   "llm_model_id": "Qwen/Qwen2.5-7B-Instruct",
-  "quantization": "4bit-nf4",
+  "quantization": "4bit-fp4",
   "infer_seconds_per_1000": 393.461,
   "total_infer_seconds": 118.04,
   "load_seconds": 10.7,

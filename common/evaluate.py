@@ -35,17 +35,20 @@ def evaluate(y_true: List[int], y_pred: List[int]) -> Dict:
     if len(y_true) == 0:
         raise ValueError("Cannot evaluate empty predictions")
 
-    # Overall metrics
+    # Overall metrics. Macro averages weight all 6 classes equally (so rare classes like
+    # pants-fire matter as much as common ones); weighted F1 weights by class support.
+    # zero_division=0 scores a class that is never predicted as 0 instead of warning/NaN.
     accuracy = accuracy_score(y_true, y_pred)
     macro_f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
     weighted_f1 = f1_score(y_true, y_pred, average="weighted", zero_division=0)
     macro_precision = precision_score(y_true, y_pred, average="macro", zero_division=0)
     macro_recall = recall_score(y_true, y_pred, average="macro", zero_division=0)
 
-    # Confusion matrix
+    # Confusion matrix (rows = true, cols = predicted). Passing labels=range(6) forces a fixed
+    # 6x6 shape even if some classes are absent from this sample.
     cm = confusion_matrix(y_true, y_pred, labels=range(6))
 
-    # Per-class metrics
+    # Per-class precision/recall/F1/support, keyed by label name (same fixed class order).
     report = classification_report(
         y_true, y_pred,
         output_dict=True,
@@ -138,7 +141,7 @@ def build_results_dict(
     gpu: str,
     avg_latency_ms: float,
     est_cost_per_1k: float,
-    cost_assumption: str = "T4: $0.35/hour",
+    cost_assumption: str = "T4: $0.35/hour",  # GPU price assumption recorded with est_cost_per_1k
     invalid_outputs: int = 0,
     notes: str = ""
 ) -> Dict:
@@ -220,6 +223,7 @@ def compare_models(model_names: List[str], input_dir: str = RESULTS_DIR) -> Dict
         try:
             all_results[model_name] = load_results_json(model_name, input_dir)
         except FileNotFoundError:
+            # A model that has not been run yet is skipped, not fatal, so partial tables print.
             print(f"Warning: Results not found for {model_name}")
 
     return all_results
@@ -263,6 +267,7 @@ if __name__ == "__main__":
     y_true = [0, 1, 2, 3, 4, 5, 0, 1, 2, 3]
     y_pred = [0, 1, 2, 3, 4, 5, 1, 1, 2, 3]  # One error at index 6
 
+    # Quick manual smoke test when the file is run directly; real tests live in tests/.
     metrics = evaluate(y_true, y_pred)
     print(f"Accuracy: {metrics['accuracy']:.4f}")
     print(f"Macro F1: {metrics['macro_f1']:.4f}")

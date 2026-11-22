@@ -19,10 +19,13 @@ import os
 
 from common.config import RESULTS_DIR
 
+# Same rate and overhead as llm/evaluate_llm.py, so fine-tuned and prompted models are priced
+# on one scale. Keep the two files in sync if the assumption changes.
 T4_PRICE_PER_HOUR = 0.35
 OVERHEAD = 1.10
 
-# (results file stem, display name, kind)
+# (results file stem, display name, kind). "kind" decides which rows are compared against
+# which: every fine-tuned row is compared with the best prompted (LLM) row.
 RUNS = [
     ("lstm", "BiLSTM", "fine-tuned"),
     ("bert_text", "BERT text-only", "fine-tuned"),
@@ -43,6 +46,9 @@ def break_even_predictions(ft_train_cost: float, ft_per_1k: float, llm_per_1k: f
     """Predictions after which fine-tuning is cheaper in total than prompting the LLM.
 
     None if fine-tuned inference is not cheaper per prediction (never pays back).
+    Total cost after n predictions: ft = train_cost + n * ft_per_1k/1000 and
+    llm = n * llm_per_1k/1000 (the LLM has no training cost), so they are equal at
+    n = train_cost / saving_per_prediction.
     """
     saving_per_pred = (llm_per_1k - ft_per_1k) / 1000
     if saving_per_pred <= 0:
@@ -51,6 +57,11 @@ def break_even_predictions(ft_train_cost: float, ft_per_1k: float, llm_per_1k: f
 
 
 def load_rows(results_dir: str = RESULTS_DIR) -> list[dict]:
+    """Read each existing results JSON in RUNS order into one flat row per model.
+
+    Result files come from different scripts, so a few fields have more than one name; the
+    `or` chains below accept either spelling and fall back to avg_latency_ms.
+    """
     rows = []
     for stem, name, kind in RUNS:
         path = os.path.join(results_dir, f"{stem}.json")
@@ -64,8 +75,13 @@ def load_rows(results_dir: str = RESULTS_DIR) -> list[dict]:
             "params": r["params"], "train_minutes": r["train_minutes"],
             "train_cost_usd": round(train_cost(r["train_minutes"]), 4),
             "ms_per_statement": r["avg_latency_ms"],
+            # LLM files use infer_seconds_per_1000, BERT files inference_sec_per_1000. At
+            # batch size 1, ms per statement equals seconds per 1,000 statements, hence the
+            # last fallback.
             "seconds_per_1000": r.get("infer_seconds_per_1000") or r.get("inference_sec_per_1000") or r["avg_latency_ms"],
             "cost_per_1k_usd": r["est_cost_per_1k"],
+            # Peak memory is named differently in LLM (gpu_peak_mem_mb) and BERT
+            # (gpu_mem_inference_mb) files; older/other runs may have neither (-> None).
             "gpu": r["gpu"], "gpu_peak_mem_mb": r.get("gpu_peak_mem_mb") or r.get("gpu_mem_inference_mb"),
             "invalid_outputs": r.get("invalid_outputs", 0), "n_eval": r["n_eval"],
         })
@@ -78,7 +94,12 @@ def _ratio(a: float, b: float) -> float | None:
 
 
 def add_comparisons(rows: list[dict]) -> list[dict]:
-    """Per fine-tuned row: ratios and break-even vs the best-macro-F1 LLM run."""
+    """Per fine-tuned row: ratios and break-even vs the best-macro-F1 LLM run.
+
+    The reference is the strongest LLM (zero-shot or few-shot) by macro-F1, so the
+    comparison is against the LLM's best case, not a weaker prompt. Returns [] if no LLM
+    results exist yet.
+    """
     llms = [r for r in rows if r["kind"] == "prompted"]
     if not llms:
         return []
@@ -100,6 +121,7 @@ def add_comparisons(rows: list[dict]) -> list[dict]:
 
 
 def to_markdown(rows: list[dict], comps: list[dict]) -> str:
+    """Render the per-model table and the fine-tuned-vs-LLM table pasted into the report."""
     def fmt(v, f="{}"):
         return "n/a" if v is None else f.format(v)
 
@@ -121,6 +143,7 @@ def to_markdown(rows: list[dict], comps: list[dict]) -> str:
 
 
 def main(results_dir: str = RESULTS_DIR) -> None:
+    """Write the JSON, Markdown and CSV outputs (results_dir is a parameter for tests)."""
     rows = load_rows(results_dir)
     if not rows:
         raise SystemExit(f"No result files found in {results_dir}")
