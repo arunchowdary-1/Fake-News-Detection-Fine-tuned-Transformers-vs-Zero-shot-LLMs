@@ -1,5 +1,7 @@
 # Running the LLM experiments (Colab T4 / Kaggle 2x T4)
 
+The same steps are in `notebooks/run_llm_colab.ipynb` (outputs cleared). The saved results were produced with a Kaggle run of the same commands.
+
 Each cell below is one Colab cell. Runtime > Change runtime type > T4 GPU.
 Total: about 2 x (3 min model load + 300 statements x ~0.5-1.5 s) = roughly 25 min.
 
@@ -7,7 +9,6 @@ Total: about 2 x (3 min model load + 300 statements x ~0.5-1.5 s) = roughly 25 m
 # 1. Code + deps (the repo pins torch 2.1; Colab's own torch is fine, only add these)
 !git clone https://github.com/arunchowdary-1/Fake-News-Detection-Fine-tuned-Transformers-vs-Zero-shot-LLMs.git repo
 %cd repo
-!git checkout feat/llm-fewshot
 !pip install -q -U bitsandbytes accelerate transformers 'datasets<4' scikit-learn
 ```
 
