@@ -4,7 +4,7 @@
 
 **PRACHI DHAKAD, SANDHYA KAUSHAL, SHILPI SHAW and ARUN**
 
-[Department], [University], [City], [Country]
+B.Tech Computer Science, Sitare University, Lucknow, Uttar Pradesh, India
 
 *(Draft, 22 November 2026)*
 
