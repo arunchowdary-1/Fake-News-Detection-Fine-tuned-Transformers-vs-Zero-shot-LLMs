@@ -117,7 +117,8 @@ def main() -> None:
 
     cuda = torch.cuda.is_available()
     if cuda:
-        torch.cuda.reset_peak_memory_stats()
+        for i in range(torch.cuda.device_count()):  # device_map="auto" may spread the model over GPUs
+            torch.cuda.reset_peak_memory_stats(i)
     t0 = time.perf_counter()
     gen = make_generate_fn(args.model, args.use_4bit)
     load_s = time.perf_counter() - t0
@@ -148,7 +149,7 @@ def main() -> None:
         "infer_seconds_per_1000": round(avg_ms, 3),  # ms/sample == s per 1,000 samples
         "total_infer_seconds": round(sum(latencies) / 1000, 2),
         "load_seconds": round(load_s, 1),
-        "gpu_peak_mem_mb": round(torch.cuda.max_memory_allocated() / 2**20, 1) if cuda else None,
+        "gpu_peak_mem_mb": round(sum(torch.cuda.max_memory_allocated(i) for i in range(torch.cuda.device_count())) / 2**20, 1) if cuda else None,
         "few_shot_examples": examples,
     })
     # JSON after every run, as the team rules require.

@@ -73,6 +73,8 @@ def test_cost_analysis_end_to_end(tmp_path):
 
 
 def test_read_liar_tsv_parses_original_format(tmp_path):
+    import pytest
+    pytest.importorskip("datasets")  # data_loader imports it
     from common.data_loader import label_to_idx, read_liar_tsv
     row = "1.json\tpants-fire\tA claim.\tsubj\tsomeone\tGovernor\tTexas\trepublican\t1\t2\t3\t4\t5\tctx"
     short = "2.json\ttrue\tShort row\tsubj"  # missing trailing columns
