@@ -34,7 +34,12 @@ def load_liar() -> Tuple[Dataset, Dataset, Dataset]:
     """
     try:
         print("Loading LIAR dataset from Hugging Face...")
-        ds = load_dataset("liar")
+        try:
+            ds = load_dataset("liar")
+        except Exception:
+            # datasets 2.16-3.x refuse script datasets (liar.py) without this flag;
+            # datasets >= 4 removed scripts entirely, so pin datasets<4 there.
+            ds = load_dataset("liar", trust_remote_code=True)
         return ds["train"], ds["validation"], ds["test"]
     except Exception as e:
         raise RuntimeError(f"Failed to load LIAR dataset: {e}")
