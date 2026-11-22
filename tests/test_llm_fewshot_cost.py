@@ -222,3 +222,20 @@ def test_markdown_has_no_footnote_without_cpu_rows(tmp_path):
     _res(tmp_path, "llm_zeroshot", 0.2, 0.15, 7_600_000_000, 0, 500, 0.06)
     rows = load_rows(str(tmp_path))
     assert "\u2020" not in to_markdown(rows, add_comparisons(rows))
+
+
+def test_outputs_are_written_as_utf8_regardless_of_system_encoding(tmp_path):
+    """The dagger footnote is non-ASCII; on Windows (cp1252 default) an unspecified encoding
+    would write it as the single byte 0x86 and leave the .md invalid UTF-8."""
+    import json as _json
+    _res(tmp_path, "lstm", 0.2, 0.18, 900_000, 3.0, 2, 0.0002)
+    p = tmp_path / "lstm.json"
+    d = _json.loads(p.read_text())
+    d["gpu"] = "CPU"
+    p.write_text(_json.dumps(d))
+    _res(tmp_path, "llm_zeroshot", 0.2, 0.15, 7_600_000_000, 0, 500, 0.06)
+    main(str(tmp_path))
+    raw = (tmp_path / "cost_comparison.md").read_bytes()
+    raw.decode("utf-8")                       # must not raise
+    assert b"\xe2\x80\xa0" in raw             # the dagger, as UTF-8
+    assert b"\x86" not in raw
