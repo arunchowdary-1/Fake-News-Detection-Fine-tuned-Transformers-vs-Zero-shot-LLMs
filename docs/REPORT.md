@@ -2,7 +2,7 @@
 
 ### Evidence from political statements in the LIAR dataset
 
-**PRACHI DHAKAD, SANDHYA KAUSHAL, SHILPI SHAW and ARUN [SURNAME]**
+**PRACHI DHAKAD, SANDHYA KAUSHAL, SHILPI SHAW and ARUN**
 
 [Department], [University], [City], [Country]
 

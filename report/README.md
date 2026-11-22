@@ -34,5 +34,5 @@ Every chart is drawn from `results/*.json` and `results/*_preds.csv`, so the fig
 3. Compile. `main.tex` has not been compiled on the machine that wrote it, so check that it renders.
 
 ## Before you submit
-- Replace the `[Surname]`, department, university, city and country placeholders on the title page (in `REPORT.md` and `main.tex`), then rebuild the PDF.
+- Replace the department, university, city and country placeholders on the title page (in `REPORT.md` and `main.tex`), then rebuild the PDF.
 - Check the reference list, which was written from memory.
