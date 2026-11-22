@@ -78,8 +78,8 @@ ENV/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
-# Keep the Colab notebooks that document how the GPU runs were done
-!colab/*.ipynb
+# Keep the notebooks in notebooks/ that document how the GPU runs were done
+!notebooks/*.ipynb
 
 # Logs
 *.log
@@ -99,5 +99,3 @@ scratch/
 # OS
 Thumbs.db
 
-# Allow the LLM Colab runner notebook (outputs cleared)
-!notebooks/run_llm_colab.ipynb
