@@ -20,4 +20,4 @@ RoBERTa: same script, `--model-name roberta-base --run-name roberta_text` (and `
 Data: `liar_data/*.tsv` from the repo is used automatically (set `LIAR_TSV_DIR` to change the folder).
 If the files are missing, the loader falls back to downloading the official zip.
 
-The notebook for the RoBERTa runs, saved with the outputs of the actual Colab T4 run, is `colab/roberta_colab.ipynb`.
+The notebook for the RoBERTa runs, saved with the outputs of the actual Colab T4 run, is `notebooks/run_roberta_colab.ipynb`.
