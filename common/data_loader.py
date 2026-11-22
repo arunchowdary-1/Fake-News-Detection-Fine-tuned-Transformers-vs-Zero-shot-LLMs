@@ -5,7 +5,7 @@ Data loader for the LIAR dataset with metadata handling and test subset generati
 import os
 from typing import Tuple, List, Dict, Optional
 import numpy as np
-from datasets import load_dataset, Dataset
+from datasets import ClassLabel, Dataset, Features, Value, load_dataset
 from common.config import LABEL_TO_IDX, TEST_SUBSET_SIZE, RANDOM_SEED, DATA_DIR
 
 # Class order of the Hugging Face "liar" ClassLabel feature (differs from LABEL_TO_IDX)
@@ -56,11 +56,22 @@ def read_liar_tsv(path: str) -> Dict[str, list]:
 
 
 def load_liar_from_dir(directory: str) -> Tuple[Dataset, Dataset, Dataset]:
-    """Load LIAR from train.tsv / valid.tsv / test.tsv in `directory` (same row order as HF)."""
-    return tuple(
-        Dataset.from_dict(read_liar_tsv(os.path.join(directory, f"{name}.tsv")))
-        for name in ("train", "valid", "test")
-    )
+    """Load LIAR from train.tsv / valid.tsv / test.tsv in `directory` (same row order as HF).
+
+    Returns the same shape as the Hugging Face copy: integer labels in a ClassLabel feature
+    (HF_LIAR_LABEL_NAMES order), so code that reads `features["label"].names` keeps working.
+    """
+    features = Features({
+        c: (ClassLabel(names=HF_LIAR_LABEL_NAMES) if c == "label"
+            else Value("int64") if c in _LIAR_COUNT_COLUMNS else Value("string"))
+        for c in LIAR_TSV_COLUMNS
+    })
+    splits = []
+    for name in ("train", "valid", "test"):
+        cols = read_liar_tsv(os.path.join(directory, f"{name}.tsv"))
+        cols["label"] = [HF_LIAR_LABEL_NAMES.index(str(l).strip().lower()) for l in cols["label"]]
+        splits.append(Dataset.from_dict(cols, features=features))
+    return tuple(splits)
 
 
 def load_liar() -> Tuple[Dataset, Dataset, Dataset]:

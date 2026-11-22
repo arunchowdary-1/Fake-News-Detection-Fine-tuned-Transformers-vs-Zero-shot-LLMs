@@ -163,3 +163,16 @@ def test_peak_memory_helpers_sum_devices_and_survive_rejected_device_args():
     bad = _FakeTorch(strict=True)
     reset_peak_memory(bad)  # must not raise
     assert bad.cuda.reset_calls == [None] and peak_memory_mb(bad) == 3.0
+
+
+def test_load_liar_from_dir_matches_hf_shape(tmp_path):
+    import pytest
+    pytest.importorskip("datasets")
+    from common.data_loader import label_to_idx, load_liar_from_dir
+    row = "1.json\tpants-fire\tA claim.\tsubj\tsomeone\tGovernor\tTexas\trepublican\t1\t2\t3\t4\t5\tctx"
+    for name in ("train", "valid", "test"):
+        (tmp_path / f"{name}.tsv").write_text(row + "\n", encoding="utf-8")
+    train, val, test = load_liar_from_dir(str(tmp_path))
+    names = test.features["label"].names  # what baselines.train.shared_test_indices reads
+    assert names[test[0]["label"]] == "pants-fire"
+    assert label_to_idx(test[0]["label"]) == 0  # integer HF ids are accepted by the shared helper
