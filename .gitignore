@@ -78,8 +78,8 @@ ENV/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
-# Allow the RoBERTa Colab notebook (kept with the outputs of the real T4 run)
-!notebooks/run_roberta_colab.ipynb
+# Keep the notebooks in notebooks/ that document how the runs were done
+!notebooks/*.ipynb
 
 # Logs
 *.log
