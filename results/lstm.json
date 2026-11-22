@@ -1,35 +1,35 @@
 {
   "model": "lstm",
-  "accuracy": 0.2,
-  "macro_f1": 0.18036123694952347,
-  "weighted_f1": 0.1803612369495235,
-  "macro_precision": 0.1876242982077995,
-  "macro_recall": 0.20000000000000004,
+  "accuracy": 0.19,
+  "macro_f1": 0.17266166907347094,
+  "weighted_f1": 0.17872379359358453,
+  "macro_precision": 0.19500990427618436,
+  "macro_recall": 0.19454118368683113,
   "params": 932998,
-  "train_minutes": 3.63,
+  "train_minutes": 3.94,
   "gpu": "CPU",
-  "avg_latency_ms": 2.196,
-  "est_cost_per_1k": 0.000235,
+  "avg_latency_ms": 2.077,
+  "est_cost_per_1k": 0.000222,
   "cost_assumption": "Priced at T4 rate $0.35/hour incl. 10% overhead; batch size 1, CPU inference",
   "n_eval": 300,
   "invalid_outputs": 0,
   "notes": "Text-only BiLSTM, trainable embeddings, best epoch 6, class-weighted loss=True",
   "confusion_matrix": [
     [
-      14,
-      8,
-      4,
-      3,
-      11,
-      10
+      5,
+      5,
+      2,
+      2,
+      6,
+      2
     ],
     [
-      12,
-      8,
-      2,
+      15,
+      10,
+      4,
       4,
       13,
-      11
+      13
     ],
     [
       13,
@@ -40,20 +40,20 @@
       12
     ],
     [
-      8,
       13,
+      14,
       4,
-      3,
-      17,
-      5
+      6,
+      18,
+      7
     ],
     [
       7,
-      6,
-      4,
+      7,
+      5,
       3,
-      17,
-      13
+      19,
+      17
     ],
     [
       6,
@@ -61,57 +61,57 @@
       2,
       0,
       21,
-      16
+      15
     ]
   ],
   "per_class_metrics": {
     "pants-fire": {
-      "precision": 0.23333333333333334,
-      "recall": 0.28,
-      "f1-score": 0.2545454545454545,
-      "support": 50.0
+      "precision": 0.0847457627118644,
+      "recall": 0.22727272727272727,
+      "f1-score": 0.12345679012345678,
+      "support": 22.0
     },
     "false": {
-      "precision": 0.1702127659574468,
-      "recall": 0.16,
-      "f1-score": 0.16494845360824742,
-      "support": 50.0
+      "precision": 0.20833333333333334,
+      "recall": 0.1694915254237288,
+      "f1-score": 0.18691588785046728,
+      "support": 59.0
     },
     "barely-true": {
-      "precision": 0.1111111111111111,
+      "precision": 0.10526315789473684,
       "recall": 0.04,
-      "f1-score": 0.058823529411764705,
+      "f1-score": 0.057971014492753624,
       "support": 50.0
     },
     "half-true": {
-      "precision": 0.1875,
-      "recall": 0.06,
-      "f1-score": 0.09090909090909091,
-      "support": 50.0
+      "precision": 0.3333333333333333,
+      "recall": 0.0967741935483871,
+      "f1-score": 0.15,
+      "support": 62.0
     },
     "mostly-true": {
-      "precision": 0.18478260869565216,
-      "recall": 0.34,
-      "f1-score": 0.23943661971830985,
-      "support": 50.0
+      "precision": 0.2111111111111111,
+      "recall": 0.3275862068965517,
+      "f1-score": 0.25675675675675674,
+      "support": 58.0
     },
     "true": {
-      "precision": 0.23880597014925373,
-      "recall": 0.32,
-      "f1-score": 0.27350427350427353,
-      "support": 50.0
+      "precision": 0.22727272727272727,
+      "recall": 0.30612244897959184,
+      "f1-score": 0.2608695652173913,
+      "support": 49.0
     },
-    "accuracy": 0.2,
+    "accuracy": 0.19,
     "macro avg": {
-      "precision": 0.1876242982077995,
-      "recall": 0.20000000000000004,
-      "f1-score": 0.18036123694952347,
+      "precision": 0.19500990427618436,
+      "recall": 0.19454118368683113,
+      "f1-score": 0.17266166907347094,
       "support": 300.0
     },
     "weighted avg": {
-      "precision": 0.18762429820779952,
-      "recall": 0.2,
-      "f1-score": 0.1803612369495235,
+      "precision": 0.21155568696179755,
+      "recall": 0.19,
+      "f1-score": 0.17872379359358453,
       "support": 300.0
     }
   },
