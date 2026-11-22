@@ -125,10 +125,17 @@ def to_markdown(rows: list[dict], comps: list[dict]) -> str:
     def fmt(v, f="{}"):
         return "n/a" if v is None else f.format(v)
 
+    # Models timed on CPU are still priced at the T4 rate (same formula for everyone), so their
+    # speed and cost ratios are not like-for-like with the GPU models. Mark them with a dagger.
+    cpu_names = {r["name"] for r in rows if "cpu" in str(r["gpu"]).lower()}
+
+    def label(name):
+        return name + " †" if name in cpu_names else name
+
     lines = ["| Model | Acc | Macro-F1 | Params | Train (min) | s / 1,000 stmts | $ / 1,000 | GPU peak MB | Invalid |",
              "|---|---|---|---|---|---|---|---|---|"]
     for r in rows:
-        lines.append(f"| {r['name']} | {r['accuracy']:.3f} | {r['macro_f1']:.3f} | {r['params']/1e6:,.0f}M | "
+        lines.append(f"| {label(r['name'])} | {r['accuracy']:.3f} | {r['macro_f1']:.3f} | {r['params']/1e6:,.0f}M | "
                      f"{r['train_minutes']:.1f} | {r['seconds_per_1000']:.1f} | {r['cost_per_1k_usd']:.4f} | "
                      f"{fmt(r['gpu_peak_mem_mb'], '{:,.0f}')} | {r['invalid_outputs']}/{r['n_eval']} |")
     if comps:
@@ -137,8 +144,11 @@ def to_markdown(rows: list[dict], comps: list[dict]) -> str:
                   "|---|---|---|---|---|---|"]
         for c in comps:
             be = "never" if c["break_even_predictions"] is None else f"{c['break_even_predictions']:,.0f}"
-            lines.append(f"| {c['finetuned']} | {fmt(c['params_ratio'], '{}x')} | {fmt(c['speedup'], '{}x')} | "
+            lines.append(f"| {label(c['finetuned'])} | {fmt(c['params_ratio'], '{}x')} | {fmt(c['speedup'], '{}x')} | "
                          f"{fmt(c['cost_ratio'], '{}x')} | {c['macro_f1_gain']:+.3f} | {be} |")
+    if cpu_names:
+        lines += ["", "† Timed on CPU but priced at the T4 rate ($0.35/h + 10% overhead), so its speed and "
+                      "cost ratios are not like-for-like with the GPU models."]
     return "\n".join(lines) + "\n"
 
 

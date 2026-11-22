@@ -196,3 +196,29 @@ def test_load_liar_from_dir_matches_hf_shape(tmp_path):
     names = test.features["label"].names  # what baselines.train.shared_test_indices reads
     assert names[test[0]["label"]] == "pants-fire"
     assert label_to_idx(test[0]["label"]) == 0  # integer HF ids are accepted by the shared helper
+
+
+def test_markdown_footnotes_models_timed_on_cpu(tmp_path):
+    """A CPU-timed model is priced at the T4 rate, so it must carry a dagger and a footnote."""
+    import json as _json
+    from llm.cost_analysis import to_markdown
+    _res(tmp_path, "lstm", 0.2, 0.18, 900_000, 3.0, 2, 0.0002)
+    p = tmp_path / "lstm.json"
+    d = _json.loads(p.read_text())
+    d["gpu"] = "CPU"
+    p.write_text(_json.dumps(d))
+    _res(tmp_path, "bert_text", 0.25, 0.24, 110_000_000, 3.0, 10, 0.001)
+    _res(tmp_path, "llm_zeroshot", 0.2, 0.15, 7_600_000_000, 0, 500, 0.06)
+    rows = load_rows(str(tmp_path))
+    md = to_markdown(rows, add_comparisons(rows))
+    assert md.count("BiLSTM \u2020") == 2          # marked in both tables
+    assert "BERT text-only \u2020" not in md        # GPU rows are not marked
+    assert "Timed on CPU but priced at the T4 rate" in md
+
+
+def test_markdown_has_no_footnote_without_cpu_rows(tmp_path):
+    from llm.cost_analysis import to_markdown
+    _res(tmp_path, "bert_text", 0.25, 0.24, 110_000_000, 3.0, 10, 0.001)
+    _res(tmp_path, "llm_zeroshot", 0.2, 0.15, 7_600_000_000, 0, 500, 0.06)
+    rows = load_rows(str(tmp_path))
+    assert "\u2020" not in to_markdown(rows, add_comparisons(rows))
