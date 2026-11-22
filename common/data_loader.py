@@ -5,7 +5,7 @@ Data loader for the LIAR dataset with metadata handling and test subset generati
 import os
 from typing import Tuple, List, Dict, Optional
 import numpy as np
-from datasets import load_dataset, Dataset
+from datasets import ClassLabel, Dataset, Features, Value, load_dataset
 from common.config import LABEL_TO_IDX, TEST_SUBSET_SIZE, RANDOM_SEED, DATA_DIR
 
 # Class order of the Hugging Face "liar" ClassLabel feature (differs from LABEL_TO_IDX)
@@ -25,6 +25,55 @@ def _label_name(label) -> Optional[str]:
     return None
 
 
+# Column order of the original LIAR TSV files (no header row), named like the HF dataset.
+LIAR_TSV_COLUMNS = [
+    "id", "label", "statement", "subject", "speaker", "job_title", "state_info",
+    "party_affiliation", "barely_true_counts", "false_counts", "half_true_counts",
+    "mostly_true_counts", "pants_on_fire_counts", "context",
+]
+_LIAR_COUNT_COLUMNS = [c for c in LIAR_TSV_COLUMNS if c.endswith("_counts")]
+
+
+def read_liar_tsv(path: str) -> Dict[str, list]:
+    """Read one original LIAR TSV file into {column: values} (HF column names).
+
+    Labels stay strings ("pants-fire", ...), which label_to_idx() accepts. Short rows
+    are padded with empty strings; count columns become ints (blank -> 0).
+    """
+    cols: Dict[str, list] = {c: [] for c in LIAR_TSV_COLUMNS}
+    with open(path, encoding="utf-8", newline="") as f:
+        for line in f:
+            line = line.rstrip("\r\n")
+            if not line:
+                continue
+            parts = line.split("\t")
+            parts = (parts + [""] * len(LIAR_TSV_COLUMNS))[: len(LIAR_TSV_COLUMNS)]
+            for name, value in zip(LIAR_TSV_COLUMNS, parts):
+                if name in _LIAR_COUNT_COLUMNS:
+                    value = int(float(value)) if value.strip() else 0
+                cols[name].append(value)
+    return cols
+
+
+def load_liar_from_dir(directory: str) -> Tuple[Dataset, Dataset, Dataset]:
+    """Load LIAR from train.tsv / valid.tsv / test.tsv in `directory` (same row order as HF).
+
+    Returns the same shape as the Hugging Face copy: integer labels in a ClassLabel feature
+    (HF_LIAR_LABEL_NAMES order), so code that reads `features["label"].names` keeps working.
+    """
+    features = Features({
+        c: (ClassLabel(names=HF_LIAR_LABEL_NAMES) if c == "label"
+            else Value("int64") if c in _LIAR_COUNT_COLUMNS else Value("string"))
+        for c in LIAR_TSV_COLUMNS
+    })
+    splits = []
+    for name in ("train", "valid", "test"):
+        cols = read_liar_tsv(os.path.join(directory, f"{name}.tsv"))
+        cols["label"] = [HF_LIAR_LABEL_NAMES.index(str(l).strip().lower()) for l in cols["label"]]
+        splits.append(Dataset.from_dict(cols, features=features))
+    return tuple(splits)
+
+
 def load_liar() -> Tuple[Dataset, Dataset, Dataset]:
     """
     Load the LIAR dataset from Hugging Face.
@@ -32,9 +81,31 @@ def load_liar() -> Tuple[Dataset, Dataset, Dataset]:
     Returns:
         (train_dataset, val_dataset, test_dataset)
     """
+    # Offline route: set LIAR_TSV_DIR to a folder with the original train/valid/test.tsv
+    # (used on Kaggle, where the dataset's download host returns 403).
+    tsv_dir = os.environ.get("LIAR_TSV_DIR")
+    if tsv_dir:
+        print(f"Loading LIAR from TSV files in {tsv_dir}")
+        return load_liar_from_dir(tsv_dir)
     try:
         print("Loading LIAR dataset from Hugging Face...")
-        ds = load_dataset("liar")
+        # Newer datasets/huggingface_hub need the full repo id and trust_remote_code
+        # (liar is a script dataset); the pinned older versions accept the plain call.
+        # datasets >= 4 removed script datasets entirely, so pin datasets<4 there.
+        attempts = [
+            lambda: load_dataset("liar"),
+            lambda: load_dataset("liar", trust_remote_code=True),
+            lambda: load_dataset("ucsbai/liar", trust_remote_code=True),
+        ]
+        last_err = None
+        for attempt in attempts:
+            try:
+                ds = attempt()
+                break
+            except Exception as err:
+                last_err = err
+        else:
+            raise last_err
         return ds["train"], ds["validation"], ds["test"]
     except Exception as e:
         raise RuntimeError(f"Failed to load LIAR dataset: {e}")
