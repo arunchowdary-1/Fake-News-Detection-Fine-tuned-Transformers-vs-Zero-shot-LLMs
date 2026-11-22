@@ -65,7 +65,8 @@ def make_generate_fn(model_id: str, use_4bit: bool):
         kwargs["device_map"] = "auto"
     model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
     model.eval()
-    n_params = sum(p.numel() for p in model.parameters())
+    # num_parameters() unpacks 4-bit weights (two per stored element); a plain sum would halve them.
+    n_params = model.num_parameters()
 
     def generate_fn(messages: list[dict]) -> str:
         # Apply the model's own chat template so the system/user roles are right.

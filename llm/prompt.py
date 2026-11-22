@@ -29,14 +29,23 @@ USER_TEMPLATE = "Statement: {statement}\nLabel:"
 MAX_STATEMENT_CHARS = 1000
 
 
-def build_messages(statement: str) -> list[dict]:
-    """Return chat messages (system + user) for one statement."""
+def build_messages(statement: str, examples: list[dict] | None = None) -> list[dict]:
+    """Return chat messages (system + optional few-shot turns + user) for one statement.
+
+    `examples` is a list of {"statement": str, "label": str} dicts (see llm/fewshot.py).
+    Each one becomes a user/assistant turn in the same format as the real question,
+    so the model sees exactly what answer shape we want. None/empty = zero-shot.
+    """
     # Validate before building anything so bad input fails with a clear error.
     if not isinstance(statement, str) or not statement.strip():
         raise ValueError("statement must be a non-empty string")
     if len(statement) > MAX_STATEMENT_CHARS:
         raise ValueError(f"statement exceeds {MAX_STATEMENT_CHARS} characters")
-    return [
-        {"role": "system", "content": SYSTEM_MESSAGE},
-        {"role": "user", "content": USER_TEMPLATE.format(statement=statement.strip())},
-    ]
+    messages = [{"role": "system", "content": SYSTEM_MESSAGE}]
+    for ex in examples or []:
+        if ex["label"] not in LABELS:
+            raise ValueError(f"unknown few-shot label {ex['label']!r}")
+        messages.append({"role": "user", "content": USER_TEMPLATE.format(statement=ex["statement"].strip())})
+        messages.append({"role": "assistant", "content": ex["label"]})
+    messages.append({"role": "user", "content": USER_TEMPLATE.format(statement=statement.strip())})
+    return messages

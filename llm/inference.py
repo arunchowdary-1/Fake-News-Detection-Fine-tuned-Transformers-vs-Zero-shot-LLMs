@@ -14,16 +14,17 @@ def classify(
     statement: str,
     generate_fn: Callable[[list[dict]], str],
     max_retries: int = 0,
+    examples: list[dict] | None = None,
 ) -> str:
     """Return a label, or "invalid" after 1 + max_retries failed attempts.
 
     max_retries defaults to 0: our decoding is greedy, so a retry would repeat
     the same answer and only double the latency. Use max_retries > 0 only with
-    a sampling generate_fn.
+    a sampling generate_fn. `examples` switches on few-shot prompting.
     """
     try:
         # Validates the statement (non-empty, max length) before touching the model.
-        messages = build_messages(statement)
+        messages = build_messages(statement, examples)
     except ValueError:
         # A bad statement is one invalid sample, not a reason to abort a whole run.
         return INVALID
