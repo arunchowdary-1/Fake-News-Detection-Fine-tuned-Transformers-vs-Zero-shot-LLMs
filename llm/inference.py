@@ -46,6 +46,7 @@ def classify(
         except Exception as err:
             # Model/runtime failure (e.g. CUDA out of memory): don't crash the
             # whole evaluation run, count this sample as a failed attempt, but say why.
+            # The counter is module-level so evaluate_llm can save it in the results JSON.
             global RUNTIME_ERRORS
             RUNTIME_ERRORS += 1
             if RUNTIME_ERRORS <= _MAX_LOGGED_ERRORS:

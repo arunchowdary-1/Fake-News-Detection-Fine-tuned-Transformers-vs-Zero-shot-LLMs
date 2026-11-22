@@ -21,6 +21,8 @@ def select_examples(statements: list[str], label_idxs: list[int], per_class: int
     """
     if len(statements) != len(label_idxs):
         raise ValueError("statements and label_idxs must have the same length")
+    # One RandomState drives both the per-class draw and the final shuffle, so a single seed
+    # reproduces the whole example set.
     rng = np.random.RandomState(seed)
     picked = []
     for idx, label in IDX_TO_LABEL.items():
@@ -32,5 +34,6 @@ def select_examples(statements: list[str], label_idxs: list[int], per_class: int
             raise ValueError(f"not enough training rows for class {label!r}")
         for i in rng.choice(pool, size=per_class, replace=False):
             picked.append({"statement": statements[int(i)].strip(), "label": label})
+    # Shuffle after picking so the label order in the prompt is not systematic (see docstring).
     order = rng.permutation(len(picked))
     return [picked[i] for i in order]

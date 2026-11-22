@@ -31,7 +31,9 @@ from llm.parser import INVALID
 from llm.prompt import DEFAULT_MODEL_ID, LABELS
 
 LABEL_TO_IDX = {label: i for i, label in enumerate(LABELS)}
-INVALID_IDX = -1  # stored in the preds CSV; never equal to a real label
+# Stored in the preds CSV; never equal to a real label (0-5), so an invalid output can only
+# count as a miss. It is deliberately not mapped to any class, to avoid inventing predictions.
+INVALID_IDX = -1
 
 # Cost assumption from plan.md: T4 at $0.35/hour plus 10% overhead (same as the other models).
 T4_PRICE_PER_HOUR = 0.35
@@ -59,7 +61,11 @@ def load_shared_rows(indices_path: str = TEST_INDICES_PATH) -> tuple[list[int], 
 
 
 def load_few_shot_examples() -> list[dict]:
-    """One TRAIN-split example per class (seed 42), shared by every few-shot run."""
+    """One TRAIN-split example per class (seed 42), shared by every few-shot run.
+
+    Drawn from train so no example can also be a test statement; fixed seed so every run
+    (and every test statement within a run) sees the same prompt.
+    """
     from common.data_loader import label_to_idx, load_liar
     from llm.fewshot import select_examples
 
@@ -75,6 +81,7 @@ def run_eval(rows: list[dict], generate_fn, examples: list[dict] | None = None) 
         # No retry: decoding is greedy, so a second try would give the same answer.
         label = classify(r["statement"], generate_fn, max_retries=0, examples=examples)
         latencies.append((time.perf_counter() - start) * 1000)
+        # Invalid outputs stay -1 and are scored as wrong later; they are never guessed.
         preds.append(LABEL_TO_IDX.get(label, INVALID_IDX) if label != INVALID else INVALID_IDX)
     return preds, latencies
 
@@ -91,8 +98,10 @@ def score(y_true: list[int], preds: list[int]) -> dict:
     """
     if len(y_true) != len(preds) or not y_true:
         raise ValueError("y_true and preds must be non-empty and the same length")
+    # Passing labels= explicitly keeps the report 6-wide even if a class is absent from
+    # y_true/preds, and keeps -1 out of the metrics.
     labels = list(range(len(LABELS)))
-    cm = confusion_matrix(y_true, preds, labels=labels)
+    cm =confusion_matrix(y_true, preds, labels=labels)
     invalid_by_class = [sum(1 for t, p in zip(y_true, preds) if t == c and p == INVALID_IDX) for c in labels]
     report = classification_report(
         y_true, preds, labels=labels, target_names=[IDX_TO_LABEL[i] for i in labels],
@@ -124,7 +133,11 @@ def reset_peak_memory(torch) -> None:
 
 
 def peak_memory_mb(torch) -> float:
-    """Peak allocated GPU memory in MB, summed over visible GPUs (current device on fallback)."""
+    """Peak allocated GPU memory in MB, summed over visible GPUs (current device on fallback).
+
+    Summed because with device_map="auto" the 7B model may be sharded over several GPUs
+    (e.g. 2x T4 on Kaggle); the current device alone would under-report the footprint.
+    """
     try:
         total = sum(torch.cuda.max_memory_allocated(torch.device("cuda", i))
                     for i in range(torch.cuda.device_count()))
@@ -134,12 +147,17 @@ def peak_memory_mb(torch) -> float:
 
 
 def cost_per_1k(avg_latency_ms: float) -> float:
-    """GPU cost of 1000 predictions at batch size 1."""
+    """GPU cost of 1000 predictions at batch size 1.
+
+    ms/prediction -> hours for 1000 predictions, times the T4 hourly rate with overhead.
+    Batch size 1 matches how the latency was measured; batching would lower the real cost.
+    """
     return avg_latency_ms / 1000 / 3600 * 1000 * T4_PRICE_PER_HOUR * OVERHEAD
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
+    """CLI: run one mode on the shared test subset and write the preds CSV and results JSON."""
+    ap =argparse.ArgumentParser()
     ap.add_argument("--indices", default=TEST_INDICES_PATH)
     ap.add_argument("--model", default=DEFAULT_MODEL_ID)
     ap.add_argument("--mode", choices=["zeroshot", "fewshot"], default="zeroshot")
@@ -164,6 +182,7 @@ def main() -> None:
 
     cuda = torch.cuda.is_available()
     if cuda:
+        # Reset before loading the model so the peak covers load + inference of this run only.
         reset_peak_memory(torch)
     t0 = time.perf_counter()
     gen = make_generate_fn(args.model, args.use_4bit)
@@ -187,7 +206,14 @@ def main() -> None:
         notes=(f"{args.mode}, greedy decoding, no retry, model={args.model}, 4bit={args.use_4bit}"
                + (f", {len(examples)} few-shot examples (1/class, train split, seed 42)" if examples else "")),
     )
-    # Extra cost fields (the shared schema has no slot for these).
+    # Extra fields (the shared schema has no slot for these), used by llm/cost_analysis.py
+    # and the report:
+    #   mode / llm_model_id / quantization   which configuration produced the numbers
+    #   infer_seconds_per_1000 / total_infer_seconds / load_seconds   speed and cost inputs
+    #   gpu_peak_mem_mb                      memory footprint (None on CPU)
+    #   few_shot_examples                    the exact prompt examples, for reproducibility
+    #   runtime_errors                       crashes in generate(), told apart from bad outputs
+    #   confusion_matrix_with_invalid        6x7 matrix, last column = invalid outputs
     results.update({
         "mode": args.mode,
         "llm_model_id": args.model,

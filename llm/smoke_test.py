@@ -25,7 +25,7 @@ from llm.prompt import DEFAULT_MODEL_ID, LABELS
 
 def load_liar_tsv(path: str) -> list[dict]:
     """Read the original LIAR TSV (no header). Only id, label, statement are used."""
-    rows = []
+    rows = []  # (the shared loader in common/data_loader.py is used for the real run)
     with open(path, encoding="utf-8", newline="") as f:
         for r in csv.reader(f, delimiter="\t"):
             # Skip malformed lines and any label we don't know about.
@@ -35,7 +35,12 @@ def load_liar_tsv(path: str) -> list[dict]:
 
 
 def stratified_sample(rows: list[dict], n: int, seed: int = 42) -> list[dict]:
-    """Pick ~n rows spread evenly over the 6 labels (fixed seed = repeatable)."""
+    """Pick ~n rows spread evenly over the 6 labels (fixed seed = repeatable).
+
+    Stratified so rare classes (pants-fire) are exercised too: a plain random sample of 20
+    could miss them and hide parse problems for those labels. n is rounded down to a
+    multiple of 6.
+    """
     rng = random.Random(seed)
     by_label = defaultdict(list)
     for r in rows:
@@ -48,7 +53,10 @@ def stratified_sample(rows: list[dict], n: int, seed: int = 42) -> list[dict]:
 
 
 def make_generate_fn(model_id: str, use_4bit: bool):
-    """Load the model once and return generate_fn(messages) -> str."""
+    """Load the model once and return generate_fn(messages) -> str.
+
+    Loading once matters: reloading a 7B model per statement would dominate the run time.
+    """
     # Imported here so the parser/unit tests don't need torch installed.
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -88,7 +96,8 @@ def make_generate_fn(model_id: str, use_4bit: bool):
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
+    """CLI: classify a small stratified sample and print the invalid rate and accuracy."""
+    ap =argparse.ArgumentParser()
     ap.add_argument("--data", required=True, help="path to LIAR test.tsv")
     ap.add_argument("--model", default=DEFAULT_MODEL_ID)
     ap.add_argument("--n", type=int, default=20)

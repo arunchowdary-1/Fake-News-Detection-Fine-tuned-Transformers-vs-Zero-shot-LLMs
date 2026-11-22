@@ -29,9 +29,13 @@ def build_texts(split, mode: str, sep_token: str = "[SEP]") -> List[str]:
     The shared metadata builder joins prefix and statement with a literal "[SEP]".
     We swap that for the tokenizer's own separator so RoBERTa ("</s>") also works.
     """
+    # Text mode is the control run: it shows how much the metadata prefix adds on top of
+    # the statement alone. `or ""` guards against missing statements.
     if mode == "text":
         return [(s or "").strip() for s in split["statement"]]
     if mode == "meta":
+        # The match is on " [SEP] " with surrounding spaces, so only the separator that
+        # build_metadata_text inserts is replaced, never text inside the statement itself.
         return [build_metadata_text(row).replace(" [SEP] ", f" {sep_token} ") for row in split]
     raise ValueError(f"mode must be 'text' or 'meta', got {mode!r}")
 
@@ -40,6 +44,8 @@ class EncodedDataset(TorchDataset):
     """Pre-tokenised texts + project-order labels, ready for a DataLoader."""
 
     def __init__(self, texts: List[str], labels: List[int], tokenizer, max_len: int):
+        # Tokenise once up front, without padding: padding is done per batch in the
+        # collate function so short batches stay short.
         self.enc = tokenizer(texts, truncation=True, max_length=max_len)
         self.labels = labels
 
@@ -56,6 +62,8 @@ def make_collate(tokenizer):
     """Pad each batch to its longest sequence (faster than padding everything to max_len)."""
 
     def collate(batch: List[Dict]) -> Dict[str, torch.Tensor]:
+        # Labels are split off first because tokenizer.pad only knows how to pad the
+        # tokenizer's own fields (input_ids, attention_mask, ...).
         labels = torch.tensor([b.pop("labels") for b in batch], dtype=torch.long)
         out = tokenizer.pad(batch, return_tensors="pt")
         out["labels"] = labels
@@ -67,6 +75,8 @@ def make_collate(tokenizer):
 def load_model_and_tokenizer(model_name: str = DEFAULT_MODEL_NAME):
     """6-class classifier head on top of the pretrained encoder, in OUR label order."""
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    # id2label/label2id use the project label order so the head's output index i means
+    # the same class here as in every other model and in the confusion matrices.
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
         num_labels=NUM_CLASSES,
@@ -77,4 +87,5 @@ def load_model_and_tokenizer(model_name: str = DEFAULT_MODEL_NAME):
 
 
 def count_params(model: torch.nn.Module) -> int:
+    """Total parameter count (trainable or not), reported in the results JSON."""
     return sum(p.numel() for p in model.parameters())
