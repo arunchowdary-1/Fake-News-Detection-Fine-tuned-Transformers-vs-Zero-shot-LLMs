@@ -178,7 +178,7 @@ Table 5 and Fig. 3(a) compare size, time and cost. Text-only BERT classifies 1,0
 - The history counts include the answer (Section 5), and the fake-vs-real grouping is our own choice made after training.
 - We tried one LLM, one prompt and 4-bit weights. Other models, prompts, retrieved examples or fine-tuning the LLM could narrow the gap. The LLM also never saw the speaker, so it did not get the same information as the speaker-aware models. The last epoch was the best for BERT and RoBERTa, so longer training might add a little.
 - Absolute accuracy is modest, as is usual for LIAR, where text-only models typically score 25 to 30% on six levels.
-- A demo application, a project README and an automated-test workflow were planned but are not in the repository.
+- A demo application and an automated-test workflow were planned but are not in the repository.
 - PolitiFact ratings are human judgements, and a model learns their biases. A model that uses the speaker can learn that some people or parties are "usually false", which may hold in the data and still be unfair to a particular claim, so speaker-aware models should not rate individual people's statements automatically. A wrong rating can damage a reputation or spread a false belief, so a human should make the final call. LIAR is public data, no personal data or secrets were used, and the packages should be checked against your organisation's approved-software list before installation.
 
 ## 7 Conclusion
